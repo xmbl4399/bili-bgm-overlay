@@ -1,0 +1,8 @@
+# 统一换行，避免跨设备（Windows/macOS/Linux）协作时整文件 diff
+* text=auto eol=lf
+
+# 二进制
+*.png binary
+*.jpg binary
+*.ico binary
+*.zip binary
