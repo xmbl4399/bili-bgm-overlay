@@ -170,6 +170,188 @@ const main = async () => {
     const s4 = await stat();
     console.log(JSON.stringify({ activeMode: s4.activeMode, activeYear: s4.activeYear, cards: s4.cards, heads: s4.heads.slice(0, 12), titles: s4.titles }, null, 1));
 
+    console.log('\n=== 4.5) 真人影视分类：日剧 / 欧美剧 / 华语剧 / 韩剧 / 电影 ===');
+    for (const [mode, label] of [['jdrama', '日剧'], ['wdrama', '欧美剧'], ['cdrama', '华语剧'], ['kdrama', '韩剧'], ['film', '电影']]) {
+      const ok = await clickSel(`.bgm-mode[data-mode="${mode}"]`);
+      await sleep(13000);
+      const s = await stat();
+      const plat = await evalJs(`JSON.stringify((() => {
+        const cards = [...document.querySelectorAll('.bgm-card')];
+        return { 卡片数: cards.length,
+                 首个标题: (cards[0] && cards[0].querySelector('.bgm-title') || {}).textContent || '—',
+                 有剧集数的卡片: cards.filter(c => c.querySelector('.bgm-ep')).length };
+      })())`);
+      console.log(`[${label}] 点击=${ok} activeMode=${s.activeMode} 卡片=${s.cards} 月份=${s.heads.filter(h => !h.includes('加载中')).length}/${s.heads.length}`);
+      console.log(`        详情=${plat}  前3标题=${JSON.stringify(s.titles.slice(0, 3))}`);
+      console.log(`        失败月份=${await evalJs(`document.querySelectorAll('#bgm-anime-root .bgm-err').length`)}`);
+    }
+    // 电影 / 韩剧都是「不带 cat + 前端过滤」，最能暴露分页提前退出 bug。
+    // ⚠️ 纯度必须读**累计**的条目（view.allItems）—— 只读 lastItems() 只会看到最后一个月的 2~5 条，
+    //    样本太小，会得出「平台纯度 {电视剧:2}」这种看似通过、其实什么都没验的假绿。
+    await clickSel('.bgm-mode[data-mode="film"]');
+    await sleep(13000);
+    await evalJs(`document.querySelector('.bgm-body').scrollTop = 2500`);
+    await sleep(6000);
+    console.log('电影 tab 平台纯度（累计已加载月份，应为 100% 电影）：' + await evalInScriptWorld(
+      `(() => { const v = window.__BGM_ANIME__; if (!v || !v.view) return '取不到 view';
+         const acc = v.view.allItems || []; if (!acc.length) return '没攒到（view.allItems 未生效）';
+         const ps = {}; for (const x of acc) ps[x.platform || '(空)'] = (ps[x.platform || '(空)'] || 0) + 1;
+         return JSON.stringify(ps) + ' 共' + acc.length + '条'; })()`));
+    console.log('电影 tab 月份分布：' + await evalJs(`JSON.stringify([...document.querySelectorAll('.bgm-month')]
+      .map(m => m.dataset.month + ':' + m.querySelectorAll('.bgm-card').length).filter(s => !s.endsWith(':0')))`));
+
+    // 韩剧：platform=电视剧 + tagPool 命中「韩国」—— 主目的不是数量而是**没有混入非韩剧**
+    await clickSel('.bgm-mode[data-mode="kdrama"]');
+    await sleep(13000);
+    await evalJs(`document.querySelector('.bgm-body').scrollTop = 2500`);
+    await sleep(6000);
+    console.log('韩剧 tab 平台纯度（累计，应全为「电视剧」）：' + await evalInScriptWorld(
+      `(() => { const v = window.__BGM_ANIME__; if (!v || !v.view) return '取不到 view';
+         const acc = v.view.allItems || []; if (!acc.length) return '没攒到';
+         const ps = {}; for (const x of acc) ps[x.platform || '(空)'] = (ps[x.platform || '(空)'] || 0) + 1;
+         return JSON.stringify(ps) + ' 共' + acc.length + '条'; })()`));
+    console.log('韩剧 tab 命中词分布（应全是 韩国/韩剧/韩语）：' + await evalInScriptWorld(
+      `(() => { const v = window.__BGM_ANIME__; if (!v || !v.view) return '取不到 view';
+         const KD = /韩剧|韩国|韩语/; const hits = {};
+         for (const x of (v.view.allItems || [])) for (const t of (x.tagPool || []))
+           if (KD.test(t)) hits[t] = (hits[t] || 0) + 1;
+         return JSON.stringify(hits); })()`));
+    console.log('韩剧 tab 卡片（标题 + 命中的 tag）：' + await evalJs(
+      `[...document.querySelectorAll('.bgm-card')].slice(0, 8)
+        .map(c => (c.querySelector('.bgm-title')||{}).textContent).join(' ; ') || '（空）'`));
+
+    console.log('\n=== 4.7) 720P 适配：9 个分类在同一行、不换行、不溢出 ===');
+    // 关键断言（不是"看起来还行"）：
+    //   ① tab 行**单行**：所有 .bgm-mode 的 top 相同（换行会让 top 分两组）
+    //   ② 顶栏**不纵向溢出**：icon 下沿 + 少量余量 ≤ 顶栏下沿（否则会被压扁/裁切）
+    //   ③ 品牌文字在窄屏消失、圆点仍在（信息不丢）
+    const topProbe = `JSON.stringify((() => {
+      const modes = [...document.querySelectorAll('.bgm-mode')].map(b => {
+        const r = b.getBoundingClientRect();
+        return { k: b.dataset.mode, t: Math.round(r.top), l: Math.round(r.left), w: Math.round(r.width) };
+      });
+      const tops = [...new Set(modes.map(m => m.t))];
+      const bar = document.querySelector('.bgm-top');
+      const barIn = document.querySelector('.bgm-top-in');
+      const barR = bar ? bar.getBoundingClientRect() : null;
+      const inR = barIn ? barIn.getBoundingClientRect() : null;
+      const gear = document.getElementById('bgm-gear-btn');
+      const gR = gear ? gear.getBoundingClientRect() : null;
+      const modesBox = document.querySelector('.bgm-modes');
+      const brandTxt = document.querySelector('.bgm-brand-txt');
+      const dot = document.querySelector('.bgm-brand-dot');
+      return {
+        vw: window.innerWidth, vh: window.innerHeight,
+        tabCount: modes.length,
+        rowCount: tops.length,
+        tabRowWidth: modes.reduce((s, m) => s + m.w, 0),
+        modesBarW: modesBox ? Math.round(modesBox.getBoundingClientRect().width) : 0,
+        modesScrollW: modesBox ? Math.round(modesBox.scrollWidth) : 0,
+        modesOverflow: modesBox ? modesBox.scrollWidth > modesBox.clientWidth + 1 : null,
+        barH: barR ? Math.round(barR.height) : null,
+        barBottom: barR ? Math.round(barR.bottom) : null,
+        contentBottom: gR ? Math.round(gR.bottom) : null,
+        rowBottom: (() => { const r = document.querySelector('.bgm-modes');
+          return r ? Math.round(r.getBoundingClientRect().bottom) : null; })(),
+        brandTxtHidden: brandTxt ? getComputedStyle(brandTxt).display === 'none' : null,
+        dotVisible: dot ? dot.getBoundingClientRect().width > 0 : null,
+        gearVisible: gR ? gR.width > 0 && gR.height > 0 : null,
+        gearRight: gR ? Math.round(gR.right) : null,
+        searchVisible: (() => { const s = document.querySelector('.bgm-search');
+          return s ? getComputedStyle(s).display !== 'none' : null; })(),
+        docOverflowX: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+        // 溢出时必须**归因**：是我们铺满用的 fixed 根容器，还是页面上别的元素。
+        // ⚠️ 关键判据不是「元素 right 是否超出视口」，而是「它是否**自己**把页面撑宽了」。
+        //    反例（本项目的经典误报）：页面已被 B站 的 .bili-header（min-width:1100）撑到 1100px，
+        //    此时 .bgm-year 只是**跟着**被排到 x=1059+，right 自然 > vw，但它并非致因。
+        //    正确做法：向上找最近的可横向滚动祖先；若该祖先存在且**祖先内**能滚到它，
+        //    说明它没撑破任何东西 ⇒ 不算。
+        overflowSources: (() => {
+          const vw = document.documentElement.clientWidth;
+          const out = [];
+          const scrollableAncestor = (el) => {
+            for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+              const cs = getComputedStyle(p);
+              if (cs.overflowX === 'auto' || cs.overflowX === 'scroll') return p;
+            }
+            return null;
+          };
+          for (const el of document.querySelectorAll('body *')) {
+            const r = el.getBoundingClientRect();
+            if (r.width <= 0 || r.right <= vw + 1) continue;
+            const cs = getComputedStyle(el);
+            const spanning = cs.position === 'fixed' && cs.left !== 'auto' && cs.right !== 'auto';
+            if (spanning) continue;          // 铺满型浮层不算（不贡献滚动条）
+            const sc = scrollableAncestor(el);
+            if (sc) continue;                // 有可滚动祖先兜着 ⇒ 它没撑破页面
+            if (out.length >= 6) break;
+            out.push((el.id ? '#' + el.id : '') +
+              (el.className && typeof el.className === 'string'
+                ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.') : '')
+              + '@' + Math.round(r.right));
+          }
+          return out;
+        })(),
+        rootIsFixed: (() => { const r = document.getElementById('bgm-anime-root');
+          return r ? getComputedStyle(r).position : 'no-root'; })(),
+        bodyScrollW: document.body.scrollWidth,
+        docClientW: document.documentElement.clientWidth,
+        // 自动归因：溢出的元素里有没有我们**会造成横向滚动的**那一类。
+        // ⚠️ 判据（连乘三条，缺一不可）：
+        //    ① 元素 right 超出视口右沿；
+        //    ② 它不是 position:fixed 且 left/right 均非 auto 的铺满型浮层
+        //       （我们的 #bgm-anime-root 就是这类，物理上不可能撑出滚动条）；
+        //    ③ 它**没有**可横向滚动的祖先 —— 有的话说明它只是被排到框外，
+        //       用户能滚过去看到它，它没有把任何东西撑宽。
+        //    B站 自己的 .bili-header（硬 min-width）在窄视口确实会超框，与本脚本无关，
+        //    所以必须让判据能把它排除出去、而不是见 bgm- 前缀就报我们。
+        overflowIsOurs: (() => {
+          const vw = document.documentElement.clientWidth;
+          const scrollableAncestor = (el) => {
+            for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+              const cs = getComputedStyle(p);
+              if (cs.overflowX === 'auto' || cs.overflowX === 'scroll') return p;
+            }
+            return null;
+          };
+          for (const el of document.querySelectorAll('body *')) {
+            const r = el.getBoundingClientRect();
+            if (r.width <= 0 || r.right <= vw + 1) continue;
+            const cs = getComputedStyle(el);
+            // fixed + 左右都不 auto ⇒ 铺满型浮层，不贡献横向滚动
+            const spanning = cs.position === 'fixed' && cs.left !== 'auto' && cs.right !== 'auto';
+            if (spanning) continue;
+            if (scrollableAncestor(el)) continue;   // ③ 被可滚动容器兜住 ⇒ 非致因
+            const id = el.id || '';
+            const cls = (typeof el.className === 'string' ? el.className : '') || '';
+            if (id.startsWith('bgm') || /(^|\s)bgm-/.test(cls)) return true;
+          }
+          return false;
+        })(),
+      };
+    })())`;
+
+    for (const [w, h, label] of [[1280, 720, '720P'], [1366, 768, '768P'], [1024, 768, 'XS'], [800, 600, '窄窗']]) {
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false });
+      await sleep(1600);
+      const r = JSON.parse(await evalJs(topProbe));
+      const okRow = r.rowCount === 1;
+      const okFit = r.contentBottom !== null && r.barBottom !== null && r.contentBottom <= r.barBottom;
+      console.log(`[${label} ${w}×${h}] tab ${r.tabCount} 个 / 行数=${r.rowCount}${okRow ? ' ✅' : ' ❌换行'}`
+        + ` ｜ tab 行宽 ${r.tabRowWidth} vs 容器 ${r.modesBarW}${r.modesOverflow ? ' (内部滚动)' : ' (放得下)'}`
+        + ` ｜ 顶栏 ${r.barH}px 内容底 ${r.contentBottom} ≤ ${r.barBottom}${okFit ? ' ✅' : ' ❌溢出'}`
+        + ` ｜ 品牌字${r.brandTxtHidden === null ? '?' : (r.brandTxtHidden ? '隐藏' : '显示')} 圆点${r.dotVisible ? '✅' : '❌'}`
+        + ` ｜ 齿轮右 ${r.gearRight}/${r.vw}${r.gearVisible ? '' : ' ❌不可见'}`
+        + (r.docOverflowX
+          ? ` ｜ 横向溢出${r.overflowIsOurs ? ' ❌来自本脚本' : ' ⚠️非本脚本'} ${JSON.stringify(r.overflowSources)}`
+          : ' ｜ ✅无横向溢出'));
+      const shotW = path.join(OUT, `layout-${w}x${h}.png`);
+      const pngW = await cdp.send('Page.captureScreenshot', { format: 'png' });
+      fs.writeFileSync(shotW, Buffer.from(pngW.data, 'base64'));
+    }
+    await cdp.send('Emulation.clearDeviceMetricsOverride');
+    await sleep(1200);
+
     console.log('\n=== 5) 滚动触发懒加载 ===');
     const before = (await stat()).cards;
     for (const y of [1200, 2600, 4200, 6000]) {

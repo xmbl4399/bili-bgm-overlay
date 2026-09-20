@@ -56,6 +56,9 @@ try {
     [has('Tier3'), '有 Tier3 兜底开关'],
     [has('主题'), '有主题选择行'],
     [info.rows.some(r => r.startsWith('主题') && r.endsWith('auto')), '主题默认 auto（跟随 B站）'],
+    // 缓存时效两项：v1.6.1 前只存在于 cfg、无 UI ⇒ 名义可配实际改不了
+    [info.rows.some(r => r.startsWith('缓存时效 · 当年') && r.endsWith('12')), '缓存时效·当年 已暴露且默认 12'],
+    [info.rows.some(r => r.startsWith('缓存时效 · 历史年') && r.endsWith('30')), '缓存时效·历史年 已暴露且默认 30'],
     [statHas('Tag 白名单'), '统计块显示白名单词数'],
     [statHas('主题：'), '统计块显示主题判定'],
     [info.panelBg !== 'rgba(0, 0, 0, 0)', '面板底色不透明'],

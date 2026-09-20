@@ -2,9 +2,9 @@
 // @name         B站番剧区 → Bangumi 番剧浏览页
 // @name:en      Bilibili Anime Section → Bangumi Browser
 // @namespace    https://github.com/xmbl4399/bili-bgm-overlay
-// @version      1.4.0
-// @description  拦截 www.bilibili.com/anime/，把番剧区换成自制的 Bangumi 番剧浏览页：TV/WEB/OVA/剧场版 四分类、年份栏 + 月份倒序分组、封面评分/流派/集数徽章；默认保留 B站 自己的顶栏（首页/番剧/搜索/头像），内容区排在它下面；主题跟随 B站 自己的深/浅色开关；在 B站 头像弹层里放一条状态行；点击卡片跳 B站搜索，右键复制标题。数据源以 api.bgm.tv/v0 为主（列表接口自带全量 tags，一次请求即可筛出流派），失败时自动回落 next.bgm.tv/p1。
-// @description:en  Replaces Bilibili's anime section with a Bangumi browsing page: TV/WEB/OVA/Movie categories, year bar, month groups in reverse order, and cover badges for score, genre tags and episode count. Keeps Bilibili's own header and follows its dark/light switch. Data from api.bgm.tv/v0, falling back to next.bgm.tv/p1.
+// @version      1.6.2
+// @description  拦截 www.bilibili.com/anime/，把番剧区换成自制的 Bangumi 浏览页：TV/WEB/OVA/剧场版 + 日剧/欧美剧/华语剧/韩剧/电影 九分类、年份栏 + 月份倒序分组、封面评分/流派徽章；默认保留 B站 自己的顶栏（首页/番剧/搜索/头像），内容区排在它下面；主题跟随 B站 自己的深/浅色开关；在 B站 头像弹层里放一条状态行；点击卡片跳 B站搜索，右键复制标题。数据源以 api.bgm.tv/v0 为主（列表接口自带全量 tags，一次请求即可筛出流派），失败时自动回落 next.bgm.tv/p1。
+// @description:en  Replaces Bilibili's anime section with a Bangumi browsing page: TV/WEB/OVA/Movie plus Japanese/Western/Chinese drama and live-action film categories, year bar, month groups in reverse order, and cover badges for score and genre tags. Keeps Bilibili's own header and follows its dark/light switch. Data from api.bgm.tv/v0, falling back to next.bgm.tv/p1.
 // @author       xmbl4399
 // @homepageURL  https://github.com/xmbl4399/bili-bgm-overlay
 // @supportURL   https://github.com/xmbl4399/bili-bgm-overlay/issues
@@ -26,10 +26,12 @@
 /**
  * 设计规格（1:1 对齐 PiliPlus 的 lib/pages/bangumi_browse/ 与 blbl 的新番表）
  *
- * 页面结构  二级 tab（TV/WEB/OVA/剧场版）→ 年份栏（横向 chip）→ 月份倒序分组（{m}月 · N 部）
+ * 页面结构  二级 tab（TV/WEB/OVA/剧场版/日剧/欧美剧/华语剧/韩剧/电影，共 9 个）→ 年份栏（横向 chip）→ 月份倒序分组（{m}月 · N 部）
  * 表头     默认**保留 B站 自己的那排顶栏**（首页/番剧/直播/搜索/头像…），内容区下移到它下面；
  *           做法是给 `.bili-header__bar` 补上 B站 自身的 `slide-down`（实底皮肤），不自己覆盖它的配色。
  *           见下方 §4b —— 侧栏设置里可关掉，关掉就退回"整页铺满、连表头一起藏"。
+ * 顶栏适配 9 个分类在 720P 下要挤在一行 ⇒ 尺寸全走 clamp() 连续收缩、tab 行允许横向滚动
+ *           （绝不 wrap），品牌文字在窄屏让位只留圆点。见 §5「顶栏」的算例注释。
  * 卡片      封面 3:4；右上角评分徽章（≥7 金色 #FFD54F，否则白 70%）；左上角流派 tag（白名单，最多 2）
  *           左下角集数（仅 TV）；标题 2 行省略
  * 交互      点击卡片 → B站搜索结果页（关键词 name_cn || name）；右键/长按 → 复制关键词
@@ -39,27 +41,56 @@
  *   ① next.bgm.tv/p1/subjects?type=&cat=&year=&month=&page=N   ← 每页 24 条，total=页数
  *   ② api.bgm.tv/v0/subjects?type=&cat=&year=&month=&limit=&offset=  ← 每页 100 条
  *   两个接口都无 CORS 头，浏览器必须走 GM_xmlhttpRequest（特权请求）。
- *   同日实测 v0 带 query 的端点全站 502，故 p1 优先、v0 兜底。
+ *   2026-09-19 复测：v0 **已恢复 200**（旧记录"带 query 全站 502"作废）⇒ 改为 v0 优先、p1 兜底。
  *
- * 分类枚举沿用 PiliPlus：动画 type=2，cat 1=TV 2=OVA 3=剧场版 5=WEB。
+ * 分类枚举（2026-09-20 实测，探针见 tools/probe-*.mjs）
+ *   动画 type=2：cat 1=TV 2=OVA 3=剧场版 5=WEB（沿用 PiliPlus）
+ *   真人 type=6：cat 1=日剧 2=欧美剧 3=华语剧；**cat≥4 一律 HTTP 400**
+ *               电影**无 cat**，必须走"不带 cat + 前端 platform 过滤"
  */
 
 (function () {
   'use strict';
 
-  const VERSION = '1.4.0';
+  const VERSION = '1.6.2';
   const NS = 'bgmanime';
   const UA = `bili-anime-replace/${VERSION} (+https://github.com/xmbl4399/bili-bgm-overlay)`;
 
   /** 年份下限（PiliPlus: kBangumiEarliestYear） */
   const EARLIEST_YEAR = 2006;
 
-  /** 浏览模式（PiliPlus: BangumiBrowseMode 的动画四项） */
+  /**
+   * 分类定义。两种拉取形态（2026-09-20 实测，脚本与说明见 tools/probe-*.mjs）：
+   *
+   *   ① `cat` 有值 → `type+cat+year+month`：**月索引生效且平台纯净**
+   *      （type=2 的 cat=1 只出 TV；type=6 的 cat=1 只出「日剧」，无杂项）
+   *   ② `cat: null` → `type+year+month`：**月索引同样生效**（实测电影 date 全落在所查月），
+   *      但会混入该 type 的所有平台 ⇒ 必须**前端按 `platform` 过滤**
+   *
+   * ★ 真人影视（type=6）实测 platform 全集（**只有这 8 种，没有「韩剧」「美剧」**）：
+   *     日剧 / 欧美剧 / 华语剧 / 电影 / 演出 / 其他 / 电视剧 / 综艺
+   *   - 韩剧在 Bangumi **没有独立分类**，被归入 `platform="电视剧"`（混合容器，
+   *     靠 tag/meta_tags 里的「韩国」区分，与「美剧」等混放）⇒ 只能做**近似**：
+   *     `platform=电视剧` + `tagFilter` 命中「韩国」（见 `applyModeFilter` 注释）。
+   *   - `演出 / 综艺 / 其他` 不是影视剧，**不纳入**。
+   *
+   * `filter`: 按 `platform` 做前端过滤（正则，大小写不敏感）
+   * `tagFilter`: 按**候选词池** `tagPool` 做前端过滤（正则；与 `filter` 是 **AND** 关系）
+   */
   const MODES = [
+    // —— 动画 type=2：cat 干净，服务端即分类 ——
     { key: 'tv', label: 'TV', type: 2, cat: 1, showTags: true, showEpisodes: true },
     { key: 'web', label: 'WEB', type: 2, cat: 5, showTags: true, showEpisodes: false },
     { key: 'ova', label: 'OVA', type: 2, cat: 2, showTags: true, showEpisodes: false },
     { key: 'movie', label: '剧场版', type: 2, cat: 3, showTags: true, showEpisodes: false },
+    // —— 真人剧集 type=6：cat=1/2/3 = 日剧 / 欧美剧 / 华语剧 ——
+    { key: 'jdrama', label: '日剧', type: 6, cat: 1, showTags: true, showEpisodes: false },
+    { key: 'wdrama', label: '欧美剧', type: 6, cat: 2, showTags: true, showEpisodes: false },
+    { key: 'cdrama', label: '华语剧', type: 6, cat: 3, showTags: true, showEpisodes: false },
+    // —— 韩剧：Bangumi 无该 platform，只能 platform=电视剧 + tag 含「韩国」（见 applyModeFilter）——
+    { key: 'kdrama', label: '韩剧', type: 6, cat: null, filter: /^电视剧$/, tagFilter: /韩剧|韩国|韩语/, showTags: true, showEpisodes: false },
+    // —— 真人电影：不带 cat，按 platform 过滤 ——
+    { key: 'film', label: '电影', type: 6, cat: null, filter: /^电影$/, showTags: true, showEpisodes: false },
   ];
 
   /**
@@ -203,9 +234,24 @@
       store.set('cacheKeys', []);
       return idx.length;
     },
+    /**
+     * 登记一个缓存键。
+     * ⚠️ 索引上限 2000 条，溢出时**必须连同数据一起删掉**被挤出的键：
+     *    只做 `slice(-2000)` 的话，那些键会「数据还在、索引没了」，
+     *    「清空缓存」永远遍历不到它们 ⇒ **永久泄漏**。
+     *    （9 分类 × 12 月 × 约 20 年 ≈ 2100+ 条，已经把 2000 顶到边上。）
+     */
     rememberKey(k) {
       const idx = store.get('cacheKeys', []);
-      if (!idx.includes(k)) { idx.push(k); store.set('cacheKeys', idx.slice(-2000)); }
+      if (idx.includes(k)) return;
+      idx.push(k);
+      const CAP = 2000;
+      if (idx.length > CAP) {
+        const evicted = idx.slice(0, idx.length - CAP);
+        for (const old of evicted) store.del(old);   // ← 淘汰 = 真删，而不是只丢索引
+        idx.splice(0, idx.length - CAP);
+      }
+      store.set('cacheKeys', idx);
     },
   };
 
@@ -328,9 +374,11 @@
       rank: Number(meta.rank) || 0,
       votes: Number(meta.total) || 0,
       tagPool: rawTagNames(e.metaTags),   // ⚠️ p1 列表项**只有** metaTags，拿不到用户投票词
+                                          //    ⇒ 走 p1 时「韩剧」这类靠 tagPool 过滤的 tab 会命中大减
       tags: pickTags(e.metaTags),         //    ⇒ 走这条路时内容词天生缺失，只能靠详情补
       episodes,
       date,
+      platform: typeof e.platform === 'string' ? e.platform : '',
       info: e.info || '',
     };
   }
@@ -374,6 +422,7 @@
       tags: pickTags(pool),
       episodes: eps,
       date: typeof e.date === 'string' ? e.date : '',
+      platform: typeof e.platform === 'string' ? e.platform : '',   // 供 MODES.filter 过滤（真人影视分类）
       info: '',
     };
   }
@@ -469,28 +518,76 @@
     cooling[base] = Date.now() + ms;
   }
 
+  /** 拼 type/cat 段：cat 为 null/undefined 时不带该参数（= 拉该 type 全部平台，前端再过滤） */
+  function catParam(mode) {
+    return (mode.cat == null) ? '' : `&cat=${mode.cat}`;
+  }
+
+  /**
+   * 按 mode 过滤条目（无 filter / tagFilter 则原样返回）。
+   *
+   * 两级过滤，都是**前端**做的（Bangumi 没有对应字段）：
+   *   - `mode.filter`    : 正则匹配 `platform`（例：电影 = `/^电影$/`）
+   *   - `mode.tagFilter` : 正则匹配**候选词池** `tagPool`（例：韩剧 = `/韩国|韩剧/`）
+   *
+   * ⚠️ 「韩剧」为什么只能这么筛：Bangumi 的 `platform` 全集只有 8 种、**没有韩剧**，
+   *    韩剧被扔进 `platform="电视剧"` 这个混合容器。唯一可用的信号是 tag 里的「韩国」。
+   *    因此本 tab = `platform=电视剧` + tag 命中「韩国」——这是**近似**，两个已知代价：
+   *      ① 漏：tag 池为空 / 没人投「韩国」的条目会被滤掉；
+   *      ② 混：tag 含「韩国」但实为合拍/涉韩的条目会进来。
+   *    宁可窄也不要混（主人定案走这条），所以是 AND 叠加而非 OR。
+   *
+   * ★ 实测成色（tools/probe-kdrama-film.mjs / probe-kdrama-miss.mjs）：
+   *    2026 年 `platform=电视剧` 14 条 → 命中 **14 条（100%）**；
+   *    2025 年 78 条 → 命中 68 条（**87%**）。
+   *    2025 那 10 条漏检的成分（全部人眼核过，没有一条是「韩国生产却漏」的）：
+   *      - 泰国 BL 剧 2 条（`泰国/泰剧`）—— 本来也不该进韩剧 tab；
+   *      - 国产剧 1 条（`国产剧`）、斯巴达克斯（`tag 池空`）、超英《战神金鸿》（`特摄`）、
+   *        日本《大叔的爱》（`tag 池空`）、韩国 BL《吾岸》（只有 `同性/BL/小说改`）—— 确实该算漏，但无解；
+   *      - **`韩语` 写法 1 条**（清潭国际高中 第二季）—— 唯一**可补**的词，已收进下方正则。
+   *    ⇒ 「韩国」是目前能拿到的最强信号，加词空间基本为零（不存在「美剧」这类反向混杂项，
+   *      platform=电视剧 里 0 条美剧）。
+   */
+  function applyModeFilter(mode, items) {
+    if (!mode.filter && !mode.tagFilter) return items;
+    return items.filter(it => {
+      if (mode.filter) {
+        mode.filter.lastIndex = 0;        // 带 g 标志的正则会保留 lastIndex，必须重置
+        if (!mode.filter.test(it.platform || '')) return false;
+      }
+      if (mode.tagFilter) {
+        mode.tagFilter.lastIndex = 0;
+        const pool = Array.isArray(it.tagPool) ? it.tagPool : [];
+        if (!pool.some(t => { mode.tagFilter.lastIndex = 0; return mode.tagFilter.test(t); })) return false;
+      }
+      return true;
+    });
+  }
+
   /** p1 单页 */
   async function fetchP1Page(base, mode, year, month, page) {
-    const url = `${base}/p1/subjects?type=${mode.type}&cat=${mode.cat}&year=${year}&month=${month}&page=${page}`;
+    const url = `${base}/p1/subjects?type=${mode.type}${catParam(mode)}&year=${year}&month=${month}&page=${page}`;
     const { status, text } = await httpText(url);
     if (status < 200 || status >= 300) throw new Error(`HTTP ${status}`);
     const data = JSON.parse(text);
     const list = Array.isArray(data.data) ? data.data : [];
     const totalPages = Number(data.total) || 1;
-    return { items: list.map(fromP1), totalPages };
+    return { items: applyModeFilter(mode, list.map(fromP1)), totalPages };
   }
 
   /** v0 单页（limit/offset 分页） */
   async function fetchV0Page(base, mode, year, month, offset) {
     const limit = 100;
-    const url = `${base}/v0/subjects?type=${mode.type}&cat=${mode.cat}&year=${year}&month=${month}`
+    const url = `${base}/v0/subjects?type=${mode.type}${catParam(mode)}&year=${year}&month=${month}`
       + `&limit=${limit}&offset=${offset}`;
     const { status, text } = await httpText(url);
     if (status < 200 || status >= 300) throw new Error(`HTTP ${status}`);
     const data = JSON.parse(text);
     const list = Array.isArray(data.data) ? data.data : [];
     const total = Number(data.total) || 0;
-    return { items: list.map(fromV0), hasMore: list.length >= limit && offset + limit < total };
+    const items = applyModeFilter(mode, list.map(fromV0));
+    // ⚠️ 过滤前的一页可能整页都不匹配（电影只占 y6 全量的 1/6）⇒ 必须按"原始页"判断是否还有更多
+    return { items, hasMore: list.length >= limit && offset + limit < total, rawLen: list.length };
   }
 
   /** 走指定通路拉全某月 */
@@ -511,15 +608,19 @@
       const pages = Math.min(first.totalPages, cfg.maxPages);
       for (let p = 2; p <= pages; p++) {
         const r = await queue(() => fetchP1Page(src.base, mode, year, month, p));
+        const nBefore = out.length;
         push(r.items);
-        if (r.items.length === 0) break;
+        // ⚠️ 有 filter 时（如"电影"）整页可能都不匹配 ⇒ 不能按"过滤后剩余"判停，
+        //    要靠 p1 的 totalPages 自然收尾；无 filter 时保留原来的提前退出（省请求）
+        if (!mode.filter && out.length === nBefore) break;
       }
     } else {
       let offset = 0;
       for (let i = 0; i < cfg.maxPages; i++) {
         const r = await queue(() => fetchV0Page(src.base, mode, year, month, offset));
         push(r.items);
-        if (!r.hasMore || r.items.length === 0) break;
+        // ⚠️ 同理：必须看**原始页长度**（rawLen），过滤后的空页不代表数据拉完了
+        if (!r.hasMore || (r.rawLen !== undefined ? r.rawLen === 0 : r.items.length === 0)) break;
         offset += 100;
       }
     }
@@ -533,11 +634,18 @@
     ? (Number(cfg.ttlHoursThisYear) || 12) * 3600e3
     : (Number(cfg.ttlDaysPastYear) || 30) * 86400e3);
 
+  /** 空结果单独给个短时效。
+   *  理由：`writeCache` 对 0 条也照写，若沿用 12h/30d，会把"这时真的还没数据"
+   *  （月初新番未录入、某月确实空）钉住很久，期间没有任何自愈机会。
+   *  30 分钟后自然过期重试，代价是极少数空月会多一次请求。 */
+  const EMPTY_TTL = 30 * 60e3;
+
   function readCache(mode, year, month) {
     const hit = store.get(cacheKeyOf(mode, year, month), null);
     if (!hit || !Array.isArray(hit.items)) return null;
-    if (Date.now() - hit.t > ttlOf(year)) return null;
-    return hit.items;
+    const age = Date.now() - hit.t;
+    if (hit.items.length === 0) return age > EMPTY_TTL ? null : hit.items;
+    return age > ttlOf(year) ? null : hit.items;
   }
 
   function writeCache(mode, year, month, items) {
@@ -831,7 +939,7 @@
     + 'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
   function statusLabel() {
-    return `番剧库： 已接管 · ${themeDark ? '深色' : '浅色'}`;
+    return `Bangumi： 已接管 · ${themeDark ? '深色' : '浅色'}`;
   }
 
   function statusTip() {
@@ -968,39 +1076,75 @@ html.bgm-takeover.bgm-forced.bgm-light{
    → 收掉重复的那个，避免两排搜索框叠着 */
 html.bgm-takeover.bgm-keep-header .bgm-search{display:none}
 
-/* ---- 顶栏 ---- */
+/* ---- 顶栏 ----
+   720P（1280×720，实际视口约 1265）下要同时塞下：品牌 + 9 个分类 tab + 工具区。
+   硬约束：分类 tab 是**主交互**，绝不能被挤到换行或缩成省略号；
+   可牺牲的是品牌文字和搜索框宽度。故：
+     ① 尺寸全部走 clamp()，随视口连续收缩（而不是靠若干断点跳变）；
+     ② .bgm-modes 允许压缩（min-width:0）并横向滚动，绝不 wrap；
+        滚动条是刻意藏掉的（见下），所以**必须**配套 enableDragScroll()
+        —— 否则桌面鼠标用户既没滚动条、又没横向滚轮，等于"看得见滚不动"；
+     ③ 品牌文字在窄屏隐藏（只留圆点），圆点是信息的最后一块 —— 见下方 @media。
+   算例（viewport 1265）：brand 18 + gap 10 + 9 chips(≈624) + gap 10 + tools(≈102) ≈ 1090 ⇒ 余量约 175px */
 .bgm-top{flex:none;background:var(--card);border-bottom:1px solid var(--line)}
-.bgm-top-in{display:flex;align-items:center;gap:16px;max-width:1600px;margin:0 auto;padding:0 20px;height:56px}
-.bgm-brand{display:flex;align-items:center;gap:8px;font-size:16px;font-weight:700;white-space:nowrap}
-.bgm-brand-dot{width:10px;height:10px;border-radius:50%;background:var(--accent)}
-.bgm-brand small{font-weight:400;font-size:12px;color:var(--sub)}
-.bgm-modes{display:flex;gap:8px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none}
+.bgm-top-in{display:flex;align-items:center;gap:clamp(8px,1.2vw,16px);max-width:1600px;margin:0 auto;
+  padding:0 clamp(10px,1.5vw,20px);height:clamp(46px,6.2vh,56px)}
+.bgm-brand{display:flex;align-items:center;gap:8px;font-size:clamp(14px,1.25vw,16px);font-weight:700;white-space:nowrap}
+.bgm-brand-dot{width:clamp(8px,0.8vw,10px);height:clamp(8px,0.8vw,10px);border-radius:50%;background:var(--accent);flex:none}
+/* 可横向拖拽的条带：藏滚动条 + 拖拽时禁文字选中，配 enableDragScroll() 使用 */
+.bgm-modes{display:flex;gap:clamp(3px,0.45vw,8px);flex:1 1 auto;min-width:0;
+  overflow-x:auto;scrollbar-width:none;scroll-behavior:smooth;
+  -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;
+  user-select:none;-webkit-user-select:none;cursor:grab}
 .bgm-modes::-webkit-scrollbar{display:none}
-.bgm-mode{padding:6px 16px;border-radius:20px;font-size:14px;color:var(--sub);cursor:pointer;
-  white-space:nowrap;border:1px solid transparent;background:transparent;font-family:inherit}
+.bgm-modes.bgm-dragging{cursor:grabbing}
+.bgm-years-in.bgm-dragging{cursor:grabbing}
+.bgm-mode{padding:clamp(4px,0.5vh,6px) clamp(7px,0.85vw,16px);border-radius:20px;
+  font-size:clamp(12px,1.05vw,14px);color:var(--sub);cursor:pointer;
+  white-space:nowrap;border:1px solid transparent;background:transparent;font-family:inherit;flex:none}
 .bgm-mode:hover{color:var(--text);background:var(--bg)}
 .bgm-mode.on{background:var(--accent-soft);color:var(--accent);font-weight:600;border-color:var(--accent)}
-.bgm-tools{display:flex;align-items:center;gap:8px;flex:none}
-.bgm-search{width:170px;height:32px;padding:0 12px;border-radius:16px;border:1px solid var(--line);
-  background:var(--bg);color:var(--text);font-size:13px;font-family:inherit;outline:none}
-.bgm-search:focus{border-color:var(--accent);width:220px}
-.bgm-ibtn{width:32px;height:32px;border-radius:8px;border:1px solid var(--line);background:var(--bg);
-  color:var(--sub);cursor:pointer;font-size:15px;line-height:1;display:flex;align-items:center;justify-content:center}
+.bgm-tools{display:flex;align-items:center;gap:clamp(4px,0.5vw,8px);flex:none}
+.bgm-search{width:clamp(96px,11vw,170px);height:clamp(28px,3.6vh,32px);padding:0 12px;border-radius:16px;
+  border:1px solid var(--line);background:var(--bg);color:var(--text);
+  font-size:13px;font-family:inherit;outline:none}
+.bgm-search:focus{border-color:var(--accent);width:clamp(140px,16vw,220px)}
+.bgm-ibtn{width:clamp(28px,3.6vh,32px);height:clamp(28px,3.6vh,32px);border-radius:8px;
+  border:1px solid var(--line);background:var(--bg);color:var(--sub);cursor:pointer;
+  font-size:15px;line-height:1;display:flex;align-items:center;justify-content:center;flex:none}
 .bgm-ibtn:hover{color:var(--accent);border-color:var(--accent)}
 
-/* ---- 年份栏 ---- */
-.bgm-years{flex:none;background:var(--card);border-bottom:1px solid var(--line)}
-.bgm-years-in{display:flex;gap:8px;max-width:1600px;margin:0 auto;padding:8px 20px;
-  overflow-x:auto;scrollbar-width:none}
+/* 窄屏：品牌文字让位（圆点保留 = 信息不丢），进一步收 tab 与内边距。
+   720P 不触发此断点（1265 > 860），窄窗口 / 竖屏手机才会。 */
+@media (max-width:860px){
+  .bgm-brand-txt{display:none}
+  .bgm-top-in{gap:8px;padding:0 10px}
+  .bgm-search{width:clamp(80px,18vw,120px)}
+}
+
+/* ---- 年份栏 ----
+   ⚠️ 年份 chip 从 2026 排到 2006（21 个），整行必然超出任何视口。
+   内层容器只是「视口内居中」的壳，**必须 min-width:0**，
+   否则 flex 子项的默认 min-width:auto 会让它撑到内容宽度（≈1000px+），
+   在 1024/800 宽的视口上直接把整页顶出横向滚动条（实测踩过）。
+   配合外层的 flex:none，滚动条只出现在这一行内部。 */
+.bgm-years{flex:none;background:var(--card);border-bottom:1px solid var(--line);min-width:0}
+.bgm-years-in{display:flex;gap:clamp(4px,0.6vw,8px);max-width:1600px;margin:0 auto;
+  padding:8px clamp(10px,1.5vw,20px);overflow-x:auto;scrollbar-width:none;min-width:0;
+  -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;
+  user-select:none;-webkit-user-select:none;cursor:grab}
 .bgm-years-in::-webkit-scrollbar{display:none}
-.bgm-year{padding:4px 14px;border-radius:14px;font-size:13px;color:var(--sub);cursor:pointer;
-  white-space:nowrap;background:var(--bg);border:1px solid transparent;font-family:inherit}
+.bgm-year{padding:clamp(3px,0.45vh,4px) clamp(9px,1vw,14px);border-radius:14px;
+  font-size:clamp(12px,1vw,13px);color:var(--sub);cursor:pointer;
+  white-space:nowrap;background:var(--bg);border:1px solid transparent;font-family:inherit;flex:none}
 .bgm-year:hover{color:var(--text)}
 .bgm-year.on{background:var(--accent-soft);color:var(--accent);font-weight:700;border-color:var(--accent)}
+/* 年份栏同理要自动滚到当前年（21 个 chip，选中的大概率在视野外） */
+.bgm-year.on{scroll-margin-inline:80px}
 
 /* ---- 主体 ---- */
-.bgm-body{flex:1;overflow-y:auto;overscroll-behavior:contain}
-.bgm-body-in{max-width:1600px;margin:0 auto;padding:4px 20px 80px}
+.bgm-body{flex:1;overflow-y:auto;overscroll-behavior:contain;min-width:0}
+.bgm-body-in{max-width:1600px;margin:0 auto;padding:4px clamp(10px,1.5vw,20px) 80px;min-width:0}
 .bgm-month-h{position:sticky;top:0;z-index:5;background:var(--bg);
   padding:14px 2px 8px;font-size:15px;font-weight:600;display:flex;align-items:baseline;gap:8px}
 .bgm-month-h em{font-style:normal;font-size:12px;font-weight:400;color:var(--sub)}
@@ -1185,6 +1329,87 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
     observers: [],
   };
 
+  /* ------------------------------------------------------------------
+     enableDragScroll(box) —— 给横向溢出的条带补上「用手拖」的能力。
+     
+     为什么必须有：这两栏都把滚动条藏了（scrollbar-width:none + ::-webkit-scrollbar
+     兜底），`overflow-x:auto` 于是只剩**编程式**滚动可用 —— 用户在桌面上
+     （720P 窗口、鼠标）既看不到滚动条、又没有横向滚轮，就等于"看得见滚不动"。
+     实测：800×600 下在 .bgm-modes 上按住拖 120px，scrollLeft 纹丝不动。
+     
+     三件事一起做才完整：
+       ① 指针拖拽平移（鼠标/触控笔/触摸统一走 Pointer Events，setPointerCapture
+          让指针移出元素也不丢手势）
+       ② 纵向滚轮 → 横向滚动（鼠标用户最自然的动作；按住 shift 时浏览器已原生横向，不重复处理）
+       ③ 拖拽期间临时压掉 scroll-behavior:smooth —— 否则每次改 scrollLeft 都被
+          平滑动画拖后腿，手感发飘、拖拽跟手性差。
+     
+     刻意**不做**的事：
+       · 不用 preventDefault 拦 click —— 拖拽后浏览器仍会派发 click，靠 moved 阈值
+         在 capture 阶段把这一次 click 吃掉（否则"拖一下"会误触发 tab 切换）。
+       · 触摸设备不加任何拦截 —— 原生触摸滚动 + 惯性比 JS 模拟好得多，交给浏览器。 */
+  function enableDragScroll(box) {
+    if (!box) return;
+    const DRAG_THRESHOLD = 4;      // 位移超过 4px 才算"拖"，否则当点击
+    let pointerId = null;          // active pointer（null = 没有进行中的手势）
+    let startX = 0, startScroll = 0, moved = false;
+
+    const isTouch = e => e.pointerType === 'touch';
+
+    box.addEventListener('pointerdown', e => {
+      if (isTouch(e)) return;                  // 触摸交给原生滚动（含惯性）
+      if (e.button !== 0) return;              // 只认左键
+      if (box.scrollWidth <= box.clientWidth + 1) return;   // 放得下就别拦
+      pointerId = e.pointerId;
+      startX = e.clientX;
+      startScroll = box.scrollLeft;
+      moved = false;
+      // 拖拽期间禁掉平滑滚动，保证跟手
+      box.style.scrollBehavior = 'auto';
+      try { box.setPointerCapture(pointerId); } catch (err) { /* 老内核忽略 */ }
+    });
+
+    box.addEventListener('pointermove', e => {
+      if (e.pointerId !== pointerId) return;
+      const dx = e.clientX - startX;
+      if (!moved && Math.abs(dx) < DRAG_THRESHOLD) return;
+      moved = true;
+      box.scrollLeft = startScroll - dx;
+      box.classList.add('bgm-dragging');     // 光标变 grabbing
+      // 拖拽中：别让文字被选中、别冒泡给上层
+      e.preventDefault();
+    });
+
+    const endDrag = e => {
+      if (e.pointerId !== pointerId) return;
+      try { box.releasePointerCapture(pointerId); } catch (err) { /* 忽略 */ }
+      pointerId = null;
+      box.classList.remove('bgm-dragging');
+      box.style.scrollBehavior = '';           // 交还给 CSS
+    };
+    box.addEventListener('pointerup', endDrag);
+    box.addEventListener('pointercancel', endDrag);
+
+    // 拖过一次之后，浏览器还会补一个 click —— 在 capture 阶段吃掉它，
+    // 否则拖拽结束落在某个 tab 上会误切换分类。
+    box.addEventListener('click', e => {
+      if (moved) { e.stopPropagation(); e.preventDefault(); moved = false; }
+    }, true);
+
+    // 纵向滚轮 → 横向。shift+滚轮是浏览器原生的横向行为，不重复处理。
+    box.addEventListener('wheel', e => {
+      if (e.shiftKey || e.ctrlKey) return;
+      if (box.scrollWidth <= box.clientWidth + 1) return;
+      const dy = e.deltaY;
+      if (!dy) return;
+      // 优先用像素增量；行/页模式给个折算，避免一格只滚几像素
+      const step = e.deltaMode === 0 ? dy : (e.deltaMode === 1 ? dy * 16 : dy * box.clientWidth * 0.9);
+      const max = box.scrollWidth - box.clientWidth;
+      const next = Math.max(0, Math.min(max, box.scrollLeft + step));
+      if (next !== box.scrollLeft) { box.scrollLeft = next; e.preventDefault(); }
+    }, { passive: false });
+  }
+
   function buildShell() {
     const root = el('div');
     root.id = 'bgm-anime-root';
@@ -1194,8 +1419,8 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
     const topIn = el('div', 'bgm-top-in');
     const brand = el('div', 'bgm-brand');
     brand.appendChild(el('span', 'bgm-brand-dot'));
-    brand.appendChild(el('span', null, '番剧库'));
-    brand.appendChild(el('small', null, 'Bangumi 数据'));
+    // 文字单独给类名：窄屏 CSS 里靠它把文字收掉、只留圆点（不用 :not() 省得跟其他 span 打架）
+    brand.appendChild(el('span', 'bgm-brand-txt', 'Bangumi'));
     topIn.appendChild(brand);
 
     const modesBar = el('div', 'bgm-modes');
@@ -1206,6 +1431,8 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
       modesBar.appendChild(b);
     });
     topIn.appendChild(modesBar);
+    // 分类条：9 个 tab 在窄屏会溢出 ⇒ 补上指针拖拽 / 滚轮横向（窄屏左右滑动）
+    enableDragScroll(modesBar);
 
     const tools = el('div', 'bgm-tools');
     const search = el('input', 'bgm-search');
@@ -1241,6 +1468,9 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
     const years = el('div', 'bgm-years');
     const yearsIn = el('div', 'bgm-years-in');
     years.appendChild(yearsIn);
+    // 年份条：21 个 chip 在**任何**视口都溢出（实测 1280×720 也 scrollW 1369 > 1280）
+    // ⇒ 它才是最需要"能拖"的一栏
+    enableDragScroll(yearsIn);
 
     /* 主体 */
     const body = el('div', 'bgm-body');
@@ -1258,9 +1488,17 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
   }
 
   function syncModeButtons() {
+    let active = null;
     view.modesBar.querySelectorAll('.bgm-mode').forEach(b => {
-      b.classList.toggle('on', b.dataset.mode === view.mode.key);
+      const on = b.dataset.mode === view.mode.key;
+      b.classList.toggle('on', on);
+      if (on) active = b;
     });
+    // 9 个分类在窄屏会溢出成横向滚动 ⇒ 选中项必须自动滚进视野，
+    // 否则用 D-pad / 键盘切换时会「选中了但看不见」（浏览器 resize 后同样受益）。
+    if (active && active.scrollIntoView) {
+      try { active.scrollIntoView({ inline: 'center', block: 'nearest' }); } catch (e) { /* 老内核忽略 */ }
+    }
   }
 
   function buildYearBar() {
@@ -1276,9 +1514,16 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
   }
 
   function syncYearButtons() {
+    let active = null;
     view.yearsBar.querySelectorAll('.bgm-year').forEach(b => {
-      b.classList.toggle('on', Number(b.dataset.year) === view.year);
+      const on = Number(b.dataset.year) === view.year;
+      b.classList.toggle('on', on);
+      if (on) active = b;
     });
+    // 年份 chip 有 21 个（2026…2006），选中的大概率在视野外 —— 与分类 tab 同理
+    if (active && active.scrollIntoView) {
+      try { active.scrollIntoView({ inline: 'center', block: 'nearest' }); } catch (e) { /* 老内核忽略 */ }
+    }
   }
 
   /* ---- 月份区块 ---- */
@@ -1300,6 +1545,16 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
 
   function renderMonthItems(sec, items, meta = {}) {
     const { head } = sec.__pending || {};
+
+    // 调试出口：记录最近一次渲染的条目（验证平台纯度 / 过滤正确性用）。
+    // ⚠️ 只留最后一次是**不够**的 —— 一个 tab 每月只 2~5 条，若只看 lastItems 会得到
+    //    「平台纯度 {电视剧:2}」这种样本过小的结论。故再**累计**整个 tab 生命周期内的条目。
+    if (!meta.error) {
+      view.lastItems = items;
+      if (!view.allItems) view.allItems = [];
+      view.allItems.push(...items);
+    }
+
 
     // 空月份整体隐藏（对齐 PiliPlus：Success 且非空才渲染）。
     // TV 番集中在 1/4/7/10 月首播，5/6/8/9 月常年是 0 部，留着会白占好几屏。
@@ -1435,6 +1690,7 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
     const token = ++view.loadToken;
     clearObservers();
     view.bodyIn.textContent = '';
+    view.allItems = [];          // 换分类/年份 → 累计样本重新开始（调试出口用）
 
     const year = view.year;
     const mode = view.mode;
@@ -1596,6 +1852,14 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
     ], () => { Object.keys(cooling).forEach(k => delete cooling[k]); renderYear(); });
     rowSelect('并发请求', 'concurrent', [[1, '1（最稳）'], [2, '2'], [3, '3'], [4, '4（最快）']]);
     rowSelect('单月最多翻页', 'maxPages', [[3, '3 页'], [6, '6 页'], [12, '12 页'], [30, '30 页']]);
+    // 缓存时效：这两项原先只存在于 cfg、没有任何 UI ⇒ 名义可配、实际改不了
+    rowSelect('缓存时效 · 当年（改动后需清缓存才生效）', 'ttlHoursThisYear', [
+      [1, '1 小时（最跟手）'], [6, '6 小时'], [12, '12 小时（默认）'],
+      [24, '24 小时'], [72, '3 天'], [168, '7 天'],
+    ]);
+    rowSelect('缓存时效 · 历史年（改动后需清缓存才生效）', 'ttlDaysPastYear', [
+      [1, '1 天'], [7, '7 天'], [30, '30 天（默认）'], [90, '90 天'], [365, '1 年'],
+    ]);
 
     const stat = el('div', 'bgm-stat');
     const cachedN = (store.get('cacheKeys', []) || []).length;
@@ -1714,7 +1978,7 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
       }, 100);
     }
 
-    document.title = '番剧库 · Bangumi 数据';
+    document.title = 'Bangumi';
 
     view.mode = MODES.find(m => m.key === cfg.mode) || MODES[0];
     view.year = new Date().getFullYear();
@@ -1793,6 +2057,7 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
     fromP1, fromV0, monthsOf, compareItems,
     loadMonth, activeSources, ensureDetailTags, fetchDetailTags, readDetailCache,
     view, renderYear, selectMode, selectYear, startTakeover, stopTakeover,
+    lastItems: () => view.lastItems,
     hideCss, applyShellMode, syncHeaderVars, headerBar,
     // 主题 / 状态行（这两块是可移植的独立模块）
     luminance, detectDark, applyTheme, onTheme, syncThemeBtn, themeDark: () => themeDark,
