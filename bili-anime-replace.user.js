@@ -2,7 +2,7 @@
 // @name         B站番剧区 → Bangumi 番剧浏览页
 // @name:en      Bilibili Anime Section → Bangumi Browser
 // @namespace    https://github.com/xmbl4399/bili-bgm-overlay
-// @version      1.6.3
+// @version      1.6.4
 // @description  拦截 www.bilibili.com/anime/，把番剧区换成自制的 Bangumi 浏览页：TV/WEB/OVA/剧场版 + 日剧/欧美剧/华语剧/韩剧/电影 九分类、年份栏 + 月份倒序分组、封面评分/流派徽章；默认保留 B站 自己的顶栏（首页/番剧/搜索/头像），内容区排在它下面；主题跟随 B站 自己的深/浅色开关；在 B站 头像弹层里放一条状态行；点击卡片跳 B站搜索，右键复制标题。数据源以 api.bgm.tv/v0 为主（列表接口自带全量 tags，一次请求即可筛出流派），失败时自动回落 next.bgm.tv/p1。
 // @description:en  Replaces Bilibili's anime section with a Bangumi browsing page: TV/WEB/OVA/Movie plus Japanese/Western/Chinese drama and live-action film categories, year bar, month groups in reverse order, and cover badges for score and genre tags. Keeps Bilibili's own header and follows its dark/light switch. Data from api.bgm.tv/v0, falling back to next.bgm.tv/p1.
 // @author       xmbl4399
@@ -52,7 +52,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.6.3';
+  const VERSION = '1.6.4';
   const NS = 'bgmanime';
   const UA = `bili-anime-replace/${VERSION} (+https://github.com/xmbl4399/bili-bgm-overlay)`;
 
@@ -194,6 +194,14 @@
     concurrent: 2,           // 每月拉取的并发上限
     maxPages: 12,            // 单月翻页安全上限（24×12=288 条）
     pageSize: 24,            // p1 固定 24；v0 为 100
+    /**
+     * 封面宽度档位 —— 单位 px，0 = 原图。
+     *
+     * ⚠️ 只接受 lain.bgm.tv 支持的**离散档位** 100/200/400/600/800（r50/r150/r300 实测 HTTP 400）。
+     * 卡片列宽 132px（窄屏 104px）⇒ 1× 屏 100 够、2× 屏 200 紧、3× 屏 400 足。
+     * 档位不烘进缓存 URL，改这里**对已缓存月份立刻生效**（见 pickCover / withCoverWidth）。
+     */
+    coverQuality: 100,
   };
 
   /* ==================================================================== *
@@ -361,20 +369,48 @@
   const BGM_WEB = 'https://bgm.tv/subject/';
 
   /**
-   * 封面档位选择 —— **统一取 common**，两条通路行为才一致。
+   * 封面宽度档位 —— lain.bgm.tv 的 /r/<N>/ 是**离散档位**，不是任意宽度。
    *
-   * ★ 实测（2026-09-21 · 2026 年 7 月新番 79 部 · 各抽 6 条确认稳定）：
-   *   两条通路的档位**命名不对齐** ——
-   *     v0: large=原图 | common=r400 | medium=r800 (241.7 KB) | small=r200
-   *     p1: large=原图 | common=r400 | medium=r200 ( 20.5 KB) | small=r100
-   *   只有 common 两边一致（都是 r400）。原先取 medium ⇒ 走 v0 是 6 倍冗余、
-   *   走 p1 又只有 r200（偏小于卡片所需）。
+   * ★ 实测（2026-09-21 · 2026 年 7 月新番 79 部）：
+   *     r50 / r150 / r300 → **HTTP 400**；可用档位只有 100 / 200 / 400 / 600 / 800。
+   *     单张字节：r100 6.2 KB ｜ r200 20.5 KB ｜ r400 71.0 KB ｜ r600 147.7 KB ｜ r800 241.7 KB
+   *     79 部总体积：r100 0.43 MB ｜ r200 1.3 MB ｜ r400 4.2 MB ｜ r800 12.4 MB（**29 倍**）
    *
-   *   卡片列宽 minmax(132px,1fr)（窄屏 104px），2× DPR 下实际只需约 300px ⇒ r400 刚好。
-   *   79 张封面实测：v0 走 medium 合计 18.6 MB，改 common 后 5.5 MB（−70%）。
+   *   卡片列宽 minmax(132px,1fr)（窄屏 104px）⇒ 1× DPR 需约 132px、2× 约 264px、3× 约 396px。
+   *   ⇒ r400 覆盖 3× DPR；r200 只够 2× DPR 且偏紧；r100 仅够 1× DPR（高分屏会糊）。
+   */
+  const COVER_TIERS = [100, 200, 400, 600, 800];
+
+  /** 把封面 URL 改写成指定宽度；w = 0 表示原图（剥掉 r/<N> 段） */
+  function withCoverWidth(url, w) {
+    if (!url) return '';
+    const s = String(url);
+    const m = s.match(/^https?:\/\/[^/]+/);
+    const origin = m ? m[0] : '';
+    const rest = s.slice(origin.length).replace(/^\/r\/\d+(?:x\d+)?/, '');
+    return w ? origin + '/r/' + w + rest : origin + rest;
+  }
+
+  /** 当前设置的封面宽度（非法值回落 400） */
+  const coverWidth = () => {
+    const q = Number(cfg.coverQuality);
+    return Number.isFinite(q) ? q : 400;
+  };
+
+  /**
+   * 封面**基准 URL** —— 恒取 common，宽度留给渲染时按设置改写。
    *
-   *   ⚠️ 接口响应总额才 592 KB，**封面图是它的 31 倍** —— 这一档位比换接口值钱得多。
-   *   medium 保留作兜底：某条万一没有 common，宁可多下一点也别没图。
+   * ★ 为什么不能直接用各档字段：两条通路的档位**命名不对齐**（实测各抽 6 条，映射稳定）——
+   *     v0: large=原图 | common=r400 | medium=r800 | small=r200 | grid=r100
+   *     p1: large=原图 | common=r400 | medium=r200 | small=r100 | grid=r100x100（方形裁剪）
+   *   只有 common 两边都指向 r400。原写法取 medium ⇒ 走 v0 每张多下 6 倍、走 p1 又偏小。
+   *   ⚠️ 旧文档曾把 p1 的 grid 记成「原图」—— 那是判档正则里 \d+ 后面接的是 x 不是 /，
+   *      匹配不上 r/100x100/ 而落进了「无 r 段 = 原图」分支。实为 100×100 方形裁剪。
+   *
+   * ⇒ 基准恒为 common，档位在渲染时改写（见 withCoverWidth）。
+   *   这样改「封面质量」**对已缓存的月份立刻生效** —— 缓存存的是基准 URL，不是烘死的档位。
+   *   接口响应总额才 592 KB，而 79 张封面在 r400 下就有 4.2 MB（r800 则 12.4 MB）
+   *   ⇒ 封面始终是接口响应的数倍到数十倍，这一项比换接口值钱得多。
    */
   const pickCover = imgs => { const i = imgs || {}; return i.common || i.medium || i.large || i.small || ''; };
 
@@ -1623,7 +1659,9 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
 
     if (it.cover) {
       const img = el('img');
-      img.src = it.cover;
+      // it.cover 是恒为 common(r400) 的**基准 URL**，宽度在这里按设置改写
+      // ⇒ 改「封面质量」不必清缓存，已加载过的月份重渲染即换档
+      img.src = withCoverWidth(it.cover, coverWidth());
       img.loading = 'lazy';
       img.referrerPolicy = 'no-referrer';
       img.alt = title;
@@ -1870,6 +1908,17 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
     ], () => { Object.keys(cooling).forEach(k => delete cooling[k]); renderYear(); });
     rowSelect('并发请求', 'concurrent', [[1, '1（最稳）'], [2, '2'], [3, '3'], [4, '4（最快）']]);
     rowSelect('单月最多翻页', 'maxPages', [[3, '3 页'], [6, '6 页'], [12, '12 页'], [30, '30 页']]);
+    // 封面质量：lain.bgm.tv 只有离散档位 —— 实测 r50/r150/r300 均 HTTP 400。
+    // 每档字节数按 2026-07 新番抽样实测标注；卡片列宽 132px（窄屏 104px），
+    // 1× 屏 r100 够用、2× 屏 r200 偏紧、3× 屏 r400 才清晰。
+    rowSelect('封面质量（改动即刻生效）', 'coverQuality', [
+      [100, '最低 r100（约 6 KB/张 · 1× 屏够用）'],
+      [200, '低 r200（约 21 KB/张 · 2× 屏偏紧）'],
+      [400, '标准 r400（约 71 KB/张 · 3× 屏清晰）'],
+      [600, '高 r600（约 148 KB/张）'],
+      [800, '很高 r800（约 242 KB/张）'],
+      [0, '原图（约 864 KB/张 · 慎选）'],
+    ], () => renderYear());
     // 缓存时效：这两项原先只存在于 cfg、没有任何 UI ⇒ 名义可配、实际改不了
     rowSelect('缓存时效 · 当年（改动后需清缓存才生效）', 'ttlHoursThisYear', [
       [1, '1 小时（最跟手）'], [6, '6 小时'], [12, '12 小时（默认）'],
@@ -2072,6 +2121,7 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
   const API = {
     VERSION, MODES, TAG_WHITELIST, TAG_T1, TAG_T2, TAG_T3, TAG_GROUP, cfg, store, netStats,
     parseInfo, pickTags, hasGenreTag, displayTitle, searchKeyword, normScore,
+    COVER_TIERS, pickCover, withCoverWidth, coverWidth,   // 封面档位（E2E 靠它算期望档位）
     fromP1, fromV0, monthsOf, compareItems,
     loadMonth, activeSources, ensureDetailTags, fetchDetailTags, readDetailCache,
     view, renderYear, selectMode, selectYear, startTakeover, stopTakeover,

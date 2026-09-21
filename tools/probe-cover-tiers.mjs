@@ -47,7 +47,11 @@ for (const it of v0items.slice(0, 2)) {
     const tier = (v || '').match(/\/r\/(\d+)\//)?.[1] || (v ? '原图' : '');
     console.log(`    ${k.padEnd(7)} ${(v ? '[' + tier + ']' : '[空]').padEnd(8)} ${v || '(空字符串)'}`);
   }
-  console.log(`    ★ 脚本实际取用（pickCover：common 优先）→ ${im.common || im.medium || im.large || im.small || '(无)'}`);
+  const rN = u => { const m = String(u || '').match(/\/r\/(\d+)(x\d+)?\//); return m ? 'r' + m[1] + (m[2] || '') : (/\/pic\/cover\//.test(u) ? '原图' : '(无)'); };
+  // ⚠️ 别再用 /\/r\/(\d+)\// 判档：p1 的 grid 是 r/100x100，\d+ 后面接 x 不是 / ⇒ 会误判成「原图」
+  console.log(`    ★ 脚本基准（pickCover：恒取 common）→ ${rN(im.common)}  ${im.common || ''}`);
+  console.log(`      宽度在渲染时按 cfg.coverQuality 改写（withCoverWidth）⇒ 各字段只作兜底链`);
+  console.log(`      兜底链：${[im.common, im.medium, im.large, im.small].map(rN).join(' → ')}`);
 }
 
 console.log('\n  —— 各档真实下载实测（第 1 条，串行）——');

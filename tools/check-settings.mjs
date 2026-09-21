@@ -45,6 +45,13 @@ try {
       + ' = ' + (r.querySelector('input') ? (r.querySelector('input').checked ? '☑' : '☐') : r.querySelector('select').value)),
     stat: (document.querySelector('.bgm-stat')||{}).innerText || '(无)',
     panelBg: getComputedStyle(document.querySelector('.bgm-panel')).backgroundColor,
+    coverSel: (() => {
+      const row = [...document.querySelectorAll('.bgm-panel .bgm-row')]
+        .find(r => (r.querySelector('span')||{}).textContent === '封面质量（改动即刻生效）');
+      if (!row) return null;
+      const s = row.querySelector('select');
+      return { value: s.value, opts: [...s.options].map(o => o.value) };
+    })(),
   })`));
   console.log('设置面板行：');
   info.rows.forEach((r, i) => console.log(`  ${String(i + 1).padStart(2)}. ${r}`));
@@ -59,6 +66,12 @@ try {
     // 缓存时效两项：v1.6.1 前只存在于 cfg、无 UI ⇒ 名义可配实际改不了
     [info.rows.some(r => r.startsWith('缓存时效 · 当年') && r.endsWith('12')), '缓存时效·当年 已暴露且默认 12'],
     [info.rows.some(r => r.startsWith('缓存时效 · 历史年') && r.endsWith('30')), '缓存时效·历史年 已暴露且默认 30'],
+    // 封面质量：lain.bgm.tv 的 /r/<N>/ 是**离散档位**（实测 r50/r150/r300 → HTTP 400），
+    // 选项必须严格等于这 5 档 + 原图(0)，多一个都会 400。
+    [!!info.coverSel, '有封面质量行'],
+    [!!info.coverSel && info.coverSel.value === '100', '封面质量默认 100（最低档）'],
+    [!!info.coverSel && info.coverSel.opts.join(',') === '100,200,400,600,800,0',
+      `封面质量选项 = 实测可用档位（实际 ${info.coverSel ? info.coverSel.opts.join(',') : '—'}）`],
     [statHas('Tag 白名单'), '统计块显示白名单词数'],
     [statHas('主题：'), '统计块显示主题判定'],
     [info.panelBg !== 'rgba(0, 0, 0, 0)', '面板底色不透明'],

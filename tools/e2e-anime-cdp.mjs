@@ -352,29 +352,82 @@ const main = async () => {
     await cdp.send('Emulation.clearDeviceMetricsOverride');
     await sleep(1200);
 
-    console.log('\n=== 4.9) 封面档位：卡片实际加载的图必须是 common(r400) ===');
+    console.log('\n=== 4.9) 封面档位：卡片实际加载的图必须等于「封面质量」设置 ===');
     // 为什么必须守住：v0 与 p1 的档位**命名不对齐**（v0 medium=r800 / p1 medium=r200），
-    // 只有 common 两边一致。原先取 medium ⇒ 走 v0 时每张多下 6 倍（241.7 KB vs 71.0 KB），
-    // 而卡片列宽才 132px（窄屏 104px），r400 已足够。
-    // 实测事实见 docs/bangumi-list-api-facts.md §8 与主脚本 pickCover() 注释。
-    const coverProbe = `JSON.stringify((() => {
-      const imgs = [...document.querySelectorAll('.bgm-card img')];
-      const tierOf = u => (String(u).match(/\\/r\\/(\\d+)\\//) || [])[1] || '原图(无r前缀)';
-      const tiers = {};
-      for (const i of imgs) { const t = tierOf(i.currentSrc || i.src); tiers[t] = (tiers[t] || 0) + 1; }
+    // 只有 common 两边一致 ⇒ 脚本一律以 common 为基准、在渲染时改写成设置的宽度。
+    // 断言**动态读 cfg.coverQuality**（不再写死 400）：默认档位是会变的，
+    // 写死会让「改了默认值」和「功能坏了」两种情形混在一起，分不清。
+    // 实测事实见 docs/bangumi-list-api-facts.md §8 与主脚本 pickCover() / withCoverWidth() 注释。
+    //
+    // ⚠️ 读 cfg / 调 withCoverWidth 必须走 **evalInScriptWorld**（隔离世界）：
+    //    内容脚本与页面是两个 window，在页面世界读 __BGM_ANIME__ **永远是 undefined**。
+    //    本段初版就错用了页面世界的 evalJs ⇒ 期望档位被兜底成 400、而实际是 100，误报「与设置不符」。
+    //    （DOM 查询仍然用 evalJs 就行 —— DOM 是两个世界共享的。）
+    const apiProbe = await evalInScriptWorld(`JSON.stringify((() => {
+      const A = (typeof __BGM_ANIME__ !== 'undefined') ? __BGM_ANIME__ : null;
+      if (!A) return { api: false };
+      const raw = A.cfg ? A.cfg.coverQuality : null;
       return {
-        cards: document.querySelectorAll('.bgm-card').length,
-        imgs: imgs.length,
-        tiers,
-        samples: imgs.slice(0, 2).map(i => i.currentSrc || i.src),
+        api: true,
+        cfgType: typeof raw,
+        cfgRaw: raw,
+        want: (typeof A.coverWidth === 'function') ? A.coverWidth() : null,
       };
-    })())`;
-    const cp = JSON.parse(await evalJs(coverProbe));
-    const tierKeys = Object.keys(cp.tiers);
-    const onlyCommon = tierKeys.length === 1 && cp.tiers['400'] > 0;
-    console.log(`卡片 ${cp.cards} 张 / img ${cp.imgs} 个 ｜ 档位分布 ${JSON.stringify(cp.tiers)}`
-      + `${onlyCommon ? ' ✅ 全为 common(r400)' : (cp.imgs === 0 ? ' ⚠️ 本页无卡片（不影响判定）' : ' ❌ 出现非 common 档位')}`);
-    cp.samples.forEach(u => console.log('  ' + u));
+    })())`);
+    let api = null;
+    try { api = JSON.parse(apiProbe); } catch (e) { api = null; }
+    if (!api || !api.api) {
+      console.log('  ❌ 取不到脚本 API（隔离世界求值失败）—— 4.9 段无法判定');
+    } else {
+      const wantKey = api.want ? String(api.want) : '原图';
+      const domProbe = `JSON.stringify((() => {
+        const imgs = [...document.querySelectorAll('.bgm-card img')];
+        const tierOf = u => { const m = String(u).match(/\\/r\\/(\\d+)(?:x\\d+)?\\//); return m ? m[1] : '原图'; };
+        const tiers = {};
+        for (const i of imgs) { const t = tierOf(i.currentSrc || i.src); tiers[t] = (tiers[t] || 0) + 1; }
+        return {
+          cards: document.querySelectorAll('.bgm-card').length,
+          imgs: imgs.length,
+          tiers,
+          samples: imgs.slice(0, 2).map(i => i.currentSrc || i.src),
+        };
+      })())`;
+      const cp = JSON.parse(await evalJs(domProbe));
+      const tierKeys = Object.keys(cp.tiers);
+      // w=0（原图）时 URL 里没有 r/<N> 段，tierOf 会归到 '原图'
+      const allMatch = cp.imgs > 0 && tierKeys.length === 1 && cp.tiers[wantKey] === cp.imgs;
+      console.log(`卡片 ${cp.cards} 张 / img ${cp.imgs} 个 ｜ 设置 ${api.cfgType} ${JSON.stringify(api.cfgRaw)}`
+        + ` → 期望 ${wantKey} ｜ 实际 ${JSON.stringify(cp.tiers)}`
+        + `${allMatch ? ' ✅ 全部符合设置' : (cp.imgs === 0 ? ' ⚠️ 本页无卡片（不影响判定）' : ' ❌ 与设置不符')}`);
+      cp.samples.forEach(u => console.log('  ' + u));
+
+      // 附带一致性检查：两份基准 URL 的档位段必须都能被改写（守 catch：p1 的 r/100x100 方形档）
+      const shapeRaw = await evalInScriptWorld(`JSON.stringify((() => {
+        const A = (typeof __BGM_ANIME__ !== 'undefined') ? __BGM_ANIME__ : null;
+        if (!A || typeof A.withCoverWidth !== 'function') return { skipped: true };
+        const v0 = 'https://lain.bgm.tv/r/400/pic/cover/l/ce/3a/1.jpg';
+        const p1sq = 'https://lain.bgm.tv/r/100x100/pic/cover/l/28/41/2.jpg';
+        return {
+          a: A.withCoverWidth(v0, 100),
+          b: A.withCoverWidth(p1sq, 100),
+          c: A.withCoverWidth(v0, 0),
+          tiers: JSON.stringify(A.COVER_TIERS || null),
+        };
+      })())`);
+      let shapeChk = null;
+      try { shapeChk = JSON.parse(shapeRaw); } catch (e) { shapeChk = null; }
+      if (!shapeChk || shapeChk.skipped) {
+        console.log('  ❌ withCoverWidth 未暴露到隔离世界，形状检查失败');
+      } else {
+        const okA = /^https:\/\/lain\.bgm\.tv\/r\/100\/pic\/cover\/l\//.test(shapeChk.a);
+        const okB = /^https:\/\/lain\.bgm\.tv\/r\/100\/pic\/cover\/l\//.test(shapeChk.b)
+          && !/x\d+\//.test(shapeChk.b);            // 方形档必须被剥掉
+        const okC = /^https:\/\/lain\.bgm\.tv\/pic\/cover\/l\//.test(shapeChk.c);
+        const okT = shapeChk.tiers === '[100,200,400,600,800]';
+        console.log(`  形状检查：普通档 ${okA ? '✅' : '❌'} ｜ 方形档 r/100x100 剥离 ${okB ? '✅' : '❌'}`
+          + ` ｜ w=0 还原原图 ${okC ? '✅' : '❌'} ｜ 档位表 ${okT ? '✅' : '❌'} ${shapeChk.tiers}`);
+      }
+    }
 
     console.log('\n=== 5) 滚动触发懒加载 ===');
     const before = (await stat()).cards;
