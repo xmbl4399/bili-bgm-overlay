@@ -69,7 +69,7 @@ try {
     // 封面质量：lain.bgm.tv 的 /r/<N>/ 是**离散档位**（实测 r50/r150/r300 → HTTP 400），
     // 选项必须严格等于这 5 档 + 原图(0)，多一个都会 400。
     [!!info.coverSel, '有封面质量行'],
-    [!!info.coverSel && info.coverSel.value === '100', '封面质量默认 100（最低档）'],
+    [!!info.coverSel && info.coverSel.value === '200', '封面质量默认 200'],
     [!!info.coverSel && info.coverSel.opts.join(',') === '100,200,400,600,800,0',
       `封面质量选项 = 实测可用档位（实际 ${info.coverSel ? info.coverSel.opts.join(',') : '—'}）`],
     [statHas('Tag 白名单'), '统计块显示白名单词数'],
