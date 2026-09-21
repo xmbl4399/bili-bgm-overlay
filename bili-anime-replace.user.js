@@ -2,7 +2,7 @@
 // @name         B站番剧区 → Bangumi 番剧浏览页
 // @name:en      Bilibili Anime Section → Bangumi Browser
 // @namespace    https://github.com/xmbl4399/bili-bgm-overlay
-// @version      1.6.4
+// @version      1.6.5
 // @description  拦截 www.bilibili.com/anime/，把番剧区换成自制的 Bangumi 浏览页：TV/WEB/OVA/剧场版 + 日剧/欧美剧/华语剧/韩剧/电影 九分类、年份栏 + 月份倒序分组、封面评分/流派徽章；默认保留 B站 自己的顶栏（首页/番剧/搜索/头像），内容区排在它下面；主题跟随 B站 自己的深/浅色开关；在 B站 头像弹层里放一条状态行；点击卡片跳 B站搜索，右键复制标题。数据源以 api.bgm.tv/v0 为主（列表接口自带全量 tags，一次请求即可筛出流派），失败时自动回落 next.bgm.tv/p1。
 // @description:en  Replaces Bilibili's anime section with a Bangumi browsing page: TV/WEB/OVA/Movie plus Japanese/Western/Chinese drama and live-action film categories, year bar, month groups in reverse order, and cover badges for score and genre tags. Keeps Bilibili's own header and follows its dark/light switch. Data from api.bgm.tv/v0, falling back to next.bgm.tv/p1.
 // @author       xmbl4399
@@ -52,7 +52,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.6.4';
+  const VERSION = '1.6.5';
   const NS = 'bgmanime';
   const UA = `bili-anime-replace/${VERSION} (+https://github.com/xmbl4399/bili-bgm-overlay)`;
 
@@ -201,7 +201,7 @@
      * 卡片列宽 132px（窄屏 104px）⇒ 1× 屏 100 够、2× 屏 200 紧、3× 屏 400 足。
      * 档位不烘进缓存 URL，改这里**对已缓存月份立刻生效**（见 pickCover / withCoverWidth）。
      */
-    coverQuality: 100,
+    coverQuality: 200,
   };
 
   /* ==================================================================== *
@@ -1910,10 +1910,10 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
     rowSelect('单月最多翻页', 'maxPages', [[3, '3 页'], [6, '6 页'], [12, '12 页'], [30, '30 页']]);
     // 封面质量：lain.bgm.tv 只有离散档位 —— 实测 r50/r150/r300 均 HTTP 400。
     // 每档字节数按 2026-07 新番抽样实测标注；卡片列宽 132px（窄屏 104px），
-    // 1× 屏 r100 够用、2× 屏 r200 偏紧、3× 屏 r400 才清晰。
+    // 1× 屏 r100 够用、2× 屏 r200 合适（默认）、3× 屏 r400 才清晰。
     rowSelect('封面质量（改动即刻生效）', 'coverQuality', [
       [100, '最低 r100（约 6 KB/张 · 1× 屏够用）'],
-      [200, '低 r200（约 21 KB/张 · 2× 屏偏紧）'],
+      [200, '低 r200（约 21 KB/张 · 2× 屏合适·默认）'],
       [400, '标准 r400（约 71 KB/张 · 3× 屏清晰）'],
       [600, '高 r600（约 148 KB/张）'],
       [800, '很高 r800（约 242 KB/张）'],
