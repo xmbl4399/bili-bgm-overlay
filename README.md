@@ -4,6 +4,8 @@
 
 **➡️ [Greasy Fork 一键安装](https://greasyfork.org/zh-CN/scripts/596516-b%E7%AB%99%E7%95%AA%E5%89%A7%E5%8C%BA-bangumi-%E7%95%AA%E5%89%A7%E6%B5%8F%E8%A7%88%E9%A1%B5)** ｜ 源码与反馈：[GitHub](https://github.com/xmbl4399/bili-bgm-overlay)
 
+> **v1.6.3**：**封面档位改取 `common`(r/400)** —— 两条数据通路的档位**命名不对齐**（v0 的 `medium` 是 **r800**、p1 的 `medium` 是 **r200**），原先 `medium` 优先 ⇒ 走 v0 时每张多下 **6 倍**、走 p1 又偏小；**只有 `common` 两边一致**（都 r400）。抽出 `pickCover()` 统一并加兜底。7 月新番 79 部实测：封面总体积 **18.6 MB → 5.5 MB（−70%）**，卡片实际加载的图已断言为 r400。
+>
 > **v1.6.2**：修三处缓存缺陷 —— ① 两个缓存时效（当年 12h / 历史年 30d）**此前只存在于配置、没有任何 UI**，名义可配实际改不了，现已暴露到设置面板；② 缓存索引超过 2000 条时**只丢索引不删数据**，导致被挤出的键「数据还在、清空缓存却遍历不到」——**永久泄漏**（9 分类 × 12 月 × 20 年已约 2100 条），现改为**淘汰即真删**；③ **空结果**原按 12h/30d 缓存，会把「这时真的还没数据」钉住很久，现单独给 **30 分钟**短时效以便自愈。
 >
 > **v1.6.1**：顶栏与年份栏补上**横向滑动** —— 两栏的滚动条是刻意藏掉的（视觉整洁），但此前没给替代手段，桌面鼠标用户「看得见滚不动」。新增 `enableDragScroll()`：指针拖拽平移（Pointer Events + `setPointerCapture`）+ 纵向滚轮转横向 + 拖拽期间压掉平滑滚动，且拖完不会误触发分类切换。
@@ -330,7 +332,7 @@ GET https://next.bgm.tv/p1/subjects?type=2&cat=1&year=2024&month=7&page=1
 | `info` | `"12话 / 2024年7月13日 / 北村翔太郎 / …"` | 正则解析出**话数**与**放送日期** |
 | `metaTags` | `["校园","TV","恋爱","日本","小说改"]` | 候选词池（没有内容词时也就没得筛） |
 | `rating.score` / `.rank` / `.total` | 评分 / 排名 / 评分人数 | 评分徽章与悬停信息 |
-| `images.medium`（回退 common/large/small） | 封面 | 卡片封面 |
+| `images.common`（经 `pickCover()`：common → medium → large → small） | 封面 | 卡片封面，两条通路统一取 **r/400**（见 [§8](docs/bangumi-list-api-facts.md)） |
 
 ### ③ 图床 `lain.bgm.tv` 无防盗链
 

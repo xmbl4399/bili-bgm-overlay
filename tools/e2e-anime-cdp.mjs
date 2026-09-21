@@ -352,6 +352,30 @@ const main = async () => {
     await cdp.send('Emulation.clearDeviceMetricsOverride');
     await sleep(1200);
 
+    console.log('\n=== 4.9) 封面档位：卡片实际加载的图必须是 common(r400) ===');
+    // 为什么必须守住：v0 与 p1 的档位**命名不对齐**（v0 medium=r800 / p1 medium=r200），
+    // 只有 common 两边一致。原先取 medium ⇒ 走 v0 时每张多下 6 倍（241.7 KB vs 71.0 KB），
+    // 而卡片列宽才 132px（窄屏 104px），r400 已足够。
+    // 实测事实见 docs/bangumi-list-api-facts.md §8 与主脚本 pickCover() 注释。
+    const coverProbe = `JSON.stringify((() => {
+      const imgs = [...document.querySelectorAll('.bgm-card img')];
+      const tierOf = u => (String(u).match(/\\/r\\/(\\d+)\\//) || [])[1] || '原图(无r前缀)';
+      const tiers = {};
+      for (const i of imgs) { const t = tierOf(i.currentSrc || i.src); tiers[t] = (tiers[t] || 0) + 1; }
+      return {
+        cards: document.querySelectorAll('.bgm-card').length,
+        imgs: imgs.length,
+        tiers,
+        samples: imgs.slice(0, 2).map(i => i.currentSrc || i.src),
+      };
+    })())`;
+    const cp = JSON.parse(await evalJs(coverProbe));
+    const tierKeys = Object.keys(cp.tiers);
+    const onlyCommon = tierKeys.length === 1 && cp.tiers['400'] > 0;
+    console.log(`卡片 ${cp.cards} 张 / img ${cp.imgs} 个 ｜ 档位分布 ${JSON.stringify(cp.tiers)}`
+      + `${onlyCommon ? ' ✅ 全为 common(r400)' : (cp.imgs === 0 ? ' ⚠️ 本页无卡片（不影响判定）' : ' ❌ 出现非 common 档位')}`);
+    cp.samples.forEach(u => console.log('  ' + u));
+
     console.log('\n=== 5) 滚动触发懒加载 ===');
     const before = (await stat()).cards;
     for (const y of [1200, 2600, 4200, 6000]) {

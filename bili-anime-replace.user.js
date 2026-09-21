@@ -2,7 +2,7 @@
 // @name         B站番剧区 → Bangumi 番剧浏览页
 // @name:en      Bilibili Anime Section → Bangumi Browser
 // @namespace    https://github.com/xmbl4399/bili-bgm-overlay
-// @version      1.6.2
+// @version      1.6.3
 // @description  拦截 www.bilibili.com/anime/，把番剧区换成自制的 Bangumi 浏览页：TV/WEB/OVA/剧场版 + 日剧/欧美剧/华语剧/韩剧/电影 九分类、年份栏 + 月份倒序分组、封面评分/流派徽章；默认保留 B站 自己的顶栏（首页/番剧/搜索/头像），内容区排在它下面；主题跟随 B站 自己的深/浅色开关；在 B站 头像弹层里放一条状态行；点击卡片跳 B站搜索，右键复制标题。数据源以 api.bgm.tv/v0 为主（列表接口自带全量 tags，一次请求即可筛出流派），失败时自动回落 next.bgm.tv/p1。
 // @description:en  Replaces Bilibili's anime section with a Bangumi browsing page: TV/WEB/OVA/Movie plus Japanese/Western/Chinese drama and live-action film categories, year bar, month groups in reverse order, and cover badges for score and genre tags. Keeps Bilibili's own header and follows its dark/light switch. Data from api.bgm.tv/v0, falling back to next.bgm.tv/p1.
 // @author       xmbl4399
@@ -52,7 +52,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.6.2';
+  const VERSION = '1.6.3';
   const NS = 'bgmanime';
   const UA = `bili-anime-replace/${VERSION} (+https://github.com/xmbl4399/bili-bgm-overlay)`;
 
@@ -360,6 +360,24 @@
 
   const BGM_WEB = 'https://bgm.tv/subject/';
 
+  /**
+   * 封面档位选择 —— **统一取 common**，两条通路行为才一致。
+   *
+   * ★ 实测（2026-09-21 · 2026 年 7 月新番 79 部 · 各抽 6 条确认稳定）：
+   *   两条通路的档位**命名不对齐** ——
+   *     v0: large=原图 | common=r400 | medium=r800 (241.7 KB) | small=r200
+   *     p1: large=原图 | common=r400 | medium=r200 ( 20.5 KB) | small=r100
+   *   只有 common 两边一致（都是 r400）。原先取 medium ⇒ 走 v0 是 6 倍冗余、
+   *   走 p1 又只有 r200（偏小于卡片所需）。
+   *
+   *   卡片列宽 minmax(132px,1fr)（窄屏 104px），2× DPR 下实际只需约 300px ⇒ r400 刚好。
+   *   79 张封面实测：v0 走 medium 合计 18.6 MB，改 common 后 5.5 MB（−70%）。
+   *
+   *   ⚠️ 接口响应总额才 592 KB，**封面图是它的 31 倍** —— 这一档位比换接口值钱得多。
+   *   medium 保留作兜底：某条万一没有 common，宁可多下一点也别没图。
+   */
+  const pickCover = imgs => { const i = imgs || {}; return i.common || i.medium || i.large || i.small || ''; };
+
   /** p1 单条 → 统一模型 */
   function fromP1(e) {
     const meta = (e.rating && typeof e.rating === 'object') ? e.rating : {};
@@ -369,7 +387,7 @@
       id: e.id,
       name: e.name || '',
       nameCn: e.nameCN || '',
-      cover: imgs.medium || imgs.common || imgs.large || imgs.small || '',
+      cover: pickCover(imgs),
       score: normScore(meta.score),
       rank: Number(meta.rank) || 0,
       votes: Number(meta.total) || 0,
@@ -414,7 +432,7 @@
       id: e.id,
       name: e.name || '',
       nameCn: e.name_cn || '',
-      cover: imgs.medium || imgs.common || imgs.large || imgs.small || '',
+      cover: pickCover(imgs),
       score: normScore(meta.score),
       rank: Number(meta.rank) || 0,
       votes: Number(meta.total) || 0,
