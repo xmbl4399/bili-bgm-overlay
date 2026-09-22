@@ -2,7 +2,7 @@
 // @name         B站番剧区 → Bangumi 番剧浏览页
 // @name:en      Bilibili Anime Section → Bangumi Browser
 // @namespace    https://github.com/xmbl4399/bili-bgm-overlay
-// @version      1.6.5
+// @version      1.6.6
 // @description  拦截 www.bilibili.com/anime/，把番剧区换成自制的 Bangumi 浏览页：TV/WEB/OVA/剧场版 + 日剧/欧美剧/华语剧/韩剧/电影 九分类、年份栏 + 月份倒序分组、封面评分/流派徽章；默认保留 B站 自己的顶栏（首页/番剧/搜索/头像），内容区排在它下面；主题跟随 B站 自己的深/浅色开关；在 B站 头像弹层里放一条状态行；点击卡片跳 B站搜索，右键复制标题。数据源以 api.bgm.tv/v0 为主（列表接口自带全量 tags，一次请求即可筛出流派），失败时自动回落 next.bgm.tv/p1。
 // @description:en  Replaces Bilibili's anime section with a Bangumi browsing page: TV/WEB/OVA/Movie plus Japanese/Western/Chinese drama and live-action film categories, year bar, month groups in reverse order, and cover badges for score and genre tags. Keeps Bilibili's own header and follows its dark/light switch. Data from api.bgm.tv/v0, falling back to next.bgm.tv/p1.
 // @author       xmbl4399
@@ -52,7 +52,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.6.5';
+  const VERSION = '1.6.6';
   const NS = 'bgmanime';
   const UA = `bili-anime-replace/${VERSION} (+https://github.com/xmbl4399/bili-bgm-overlay)`;
 
@@ -1183,13 +1183,16 @@ html.bgm-takeover.bgm-keep-header .bgm-search{display:none}
    在 1024/800 宽的视口上直接把整页顶出横向滚动条（实测踩过）。
    配合外层的 flex:none，滚动条只出现在这一行内部。 */
 .bgm-years{flex:none;background:var(--card);border-bottom:1px solid var(--line);min-width:0}
-.bgm-years-in{display:flex;gap:clamp(4px,0.6vw,8px);max-width:1600px;margin:0 auto;
-  padding:8px clamp(10px,1.5vw,20px);overflow-x:auto;scrollbar-width:none;min-width:0;
+/* ★ v1.6.6 紧凑化：行内 padding 8→4，chip 的 padding/gap/字号各降一档、圆角 14→10。
+   实测（见 tools/shot-badges-years.mjs）：1280×720 下 21 个 chip 原先**溢出 89px**
+   （必须拖动才能看到早年），改造后一行放得下；条高 40px → 30px（720P 竖向能多留半行卡片）。 */
+.bgm-years-in{display:flex;gap:clamp(3px,0.45vw,5px);max-width:1600px;margin:0 auto;
+  padding:4px clamp(8px,1.2vw,16px);overflow-x:auto;scrollbar-width:none;min-width:0;
   -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;
   user-select:none;-webkit-user-select:none;cursor:grab}
 .bgm-years-in::-webkit-scrollbar{display:none}
-.bgm-year{padding:clamp(3px,0.45vh,4px) clamp(9px,1vw,14px);border-radius:14px;
-  font-size:clamp(12px,1vw,13px);color:var(--sub);cursor:pointer;
+.bgm-year{padding:2px clamp(7px,0.8vw,10px);border-radius:10px;line-height:1.4;
+  font-size:clamp(11px,0.85vw,12px);color:var(--sub);cursor:pointer;
   white-space:nowrap;background:var(--bg);border:1px solid transparent;font-family:inherit;flex:none}
 .bgm-year:hover{color:var(--text)}
 .bgm-year.on{background:var(--accent-soft);color:var(--accent);font-weight:700;border-color:var(--accent)}
@@ -1212,14 +1215,25 @@ html.bgm-takeover.bgm-keep-header .bgm-search{display:none}
   background:var(--bg);box-shadow:var(--shadow);text-decoration:none}
 .bgm-cover img{width:100%;height:100%;object-fit:cover;transition:transform .25s}
 .bgm-cover:hover img{transform:scale(1.04)}
-.bgm-score{position:absolute;top:6px;right:6px;padding:2px 5px;border-radius:4px;
-  background:rgba(0,0,0,.54);color:rgba(255,255,255,.7);font-size:11px;line-height:1.2}
-.bgm-score.hot{color:#FFD54F;font-weight:700}
-.bgm-tags{position:absolute;top:6px;left:6px;display:flex;flex-direction:column;gap:3px;align-items:flex-start}
-.bgm-tag{padding:2px 4px;border-radius:3px;background:rgba(0,0,0,.54);color:rgba(255,255,255,.7);
-  font-size:10px;line-height:1.2}
-.bgm-eps{position:absolute;bottom:6px;left:6px;padding:2px 4px;border-radius:3px;
-  background:rgba(0,0,0,.54);color:rgba(255,255,255,.7);font-size:10px;line-height:1.2}
+/* ---- 封面徽章（评分 / 标签 / 集数）----
+   ★ v1.6.6 可读度改造：底色 .54→.74、白字 70%→95%、字重 600、字号各 +1px，
+   并加描边 + 投影 + 毛玻璃。旧值（10px 字 / 70% 白 / 半透黑底）在**浅色封面**
+   上几乎糊成一片 —— 主人要求「提高 tag、评分、集数的可视度」。
+   三个徽章共用同一套基底，各自只写位置与尺寸差异。 */
+.bgm-score,.bgm-tag,.bgm-eps{
+  background:rgba(0,0,0,.74);color:rgba(255,255,255,.95);font-weight:600;
+  text-shadow:0 1px 2px rgba(0,0,0,.55);box-shadow:0 1px 3px rgba(0,0,0,.35);
+  border:1px solid rgba(255,255,255,.16);
+  backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
+.bgm-score{position:absolute;top:6px;right:6px;padding:2px 6px;border-radius:5px;
+  font-size:12px;line-height:1.25;font-variant-numeric:tabular-nums}
+.bgm-score.hot{color:#FFD54F;font-weight:800;background:rgba(0,0,0,.8)}
+.bgm-tags{position:absolute;top:6px;left:6px;display:flex;flex-direction:column;gap:3px;
+  align-items:flex-start;max-width:calc(100% - 56px)}
+.bgm-tag{padding:2px 5px;border-radius:4px;font-size:11px;line-height:1.25;
+  max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bgm-eps{position:absolute;bottom:6px;left:6px;padding:2px 6px;border-radius:4px;
+  font-size:11px;line-height:1.25;font-variant-numeric:tabular-nums}
 .bgm-title{display:block;margin-top:6px;font-size:13px;line-height:1.25;color:var(--text);
   text-decoration:none;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .bgm-title:hover{color:var(--accent)}
