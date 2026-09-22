@@ -73,6 +73,8 @@ try {
     [!!info.coverSel && info.coverSel.opts.join(',') === '100,200,400,600,800,0',
       `封面质量选项 = 实测可用档位（实际 ${info.coverSel ? info.coverSel.opts.join(',') : '—'}）`],
     [statHas('Tag 白名单'), '统计块显示白名单词数'],
+    // 隐藏无评分：v1.6.6 起默认开启（主人要求"默认隐藏无评分条目"）
+    [info.rows.some(r => r.startsWith('隐藏无评分条目') && r.endsWith('☑')), '隐藏无评分默认勾选'],
     [statHas('主题：'), '统计块显示主题判定'],
     [info.panelBg !== 'rgba(0, 0, 0, 0)', '面板底色不透明'],
   ];

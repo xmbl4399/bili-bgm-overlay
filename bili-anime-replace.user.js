@@ -163,7 +163,7 @@
     showTags: true,
     showEpisodes: true,
     showScore: true,
-    hideNoScore: false,      // 隐藏无评分条目
+    hideNoScore: true,       // 隐藏无评分条目（默认开）
     /**
      * Tier3（平台/地区）兜底：列表只给「TV/日本」这类零信息量的词时，是否拿它填卡片槽位。
      *   true  → 覆盖率能顶到 ~98%（2026 四类），代价是卡上出现「TV / 日本」
@@ -1914,7 +1914,7 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
       ['fill', '没有题材词就补（应急）'],
     ], () => renderYear());
     rowCheck('显示集数（仅 TV）', 'showEpisodes', () => renderYear());
-    rowCheck('隐藏无评分条目（需清缓存）', 'hideNoScore');
+    rowCheck('隐藏无评分条目（默认开 · 改动需清缓存）', 'hideNoScore');
     rowSelect('数据通路', 'source', [
       ['auto', '自动（v0 → p1）'],
       ['v0', '仅 api.bgm.tv/v0（推荐 · 带全量 tag）'],
