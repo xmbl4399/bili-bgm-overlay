@@ -4,3 +4,7 @@ tools/.e2e-anime-out/
 
 # 临时浏览器 profile
 tools/profile-*/
+
+# E2E / 探针的运行日志（临时产物）
+tools/cdp-run*.log
+tools/*.log

@@ -4,7 +4,9 @@
  * 目的：主人要求「提高 tag、评分、集数的可视度」+「年份栏改紧凑些」。
  *   这类改动光说"字号从 10 调到 11"没有意义，必须**同一块区域改动前后各截一次**用眼睛比。
  *
- * 用法：node tools/shot-badges-years.mjs <tag>        # tag 如 before / after
+ * 用法：node tools/shot-badges-years.mjs <tag> [mode]
+ *       tag  如 before / after / mytest（决定产物文件名）
+ *       mode 分类 key，默认 tv；可选 web / ova / movie / jpdrama / usdrama / cndrama / kdrama / film
  * 产出：tools/.e2e-anime-out/ui-<tag>-<vp>-years.png   ← 年份栏整条
  *       tools/.e2e-anime-out/ui-<tag>-<vp>-cards.png   ← 第一行卡片（含评分/标签/集数徽章）
  *       <vp> = 720p（1280×720 · 1× DPR，主人的真实观感）｜ hi2x（1440×900 · 2× DPR，放大看细节）
@@ -27,6 +29,8 @@ const OUT = path.join(__dirname, '.e2e-anime-out');
 const EDGE = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
 const PORT = Number(process.env.CDP_PORT || 9280);
 const TAG = process.argv[2] || 'shot';
+// 分类 key（对应 .bgm-mode[data-mode]）：tv / web / ova / movie / jpdrama / usdrama / cndrama / kdrama / film
+const MODE = process.argv[3] || 'tv';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const VIEWPORTS = [
@@ -90,10 +94,11 @@ try {
   await sleep(12000);
 
   // 就绪判定只看 DOM：页面世界里 window.__BGM_ANIME__ 永远是 undefined（隔离世界）
-  if (!(await ev(`!!document.querySelector('.bgm-mode[data-mode="tv"]')`))) {
-    throw new Error('脚本未注入（12s 内没出 .bgm-mode）');
+  const modeSel = `.bgm-mode[data-mode="${MODE}"]`;
+  if (!(await ev(`!!document.querySelector(${JSON.stringify(modeSel)})`))) {
+    throw new Error(`脚本未注入（12s 内没出 ${modeSel}）`);
   }
-  await ev(`document.querySelector('.bgm-mode[data-mode="tv"]').click()`);
+  await ev(`document.querySelector(${JSON.stringify(modeSel)}).click()`);
   await sleep(10000);
 
   console.log(`\nUI 前后对比截图 · tag = ${TAG}`);
