@@ -2,7 +2,7 @@
 // @name         B站番剧区 → Bangumi 番剧浏览页
 // @name:en      Bilibili Anime Section → Bangumi Browser
 // @namespace    https://github.com/xmbl4399/bili-bgm-overlay
-// @version      1.6.6
+// @version      1.6.7
 // @description  拦截 www.bilibili.com/anime/，把番剧区换成自制的 Bangumi 浏览页：TV/WEB/OVA/剧场版 + 日剧/欧美剧/华语剧/韩剧/电影 九分类、年份栏 + 月份倒序分组、封面评分/流派徽章；默认保留 B站 自己的顶栏（首页/番剧/搜索/头像），内容区排在它下面；主题跟随 B站 自己的深/浅色开关；在 B站 头像弹层里放一条状态行；点击卡片跳 B站搜索，右键复制标题。数据源以 api.bgm.tv/v0 为主（列表接口自带全量 tags，一次请求即可筛出流派），失败时自动回落 next.bgm.tv/p1。
 // @description:en  Replaces Bilibili's anime section with a Bangumi browsing page: TV/WEB/OVA/Movie plus Japanese/Western/Chinese drama and live-action film categories, year bar, month groups in reverse order, and cover badges for score and genre tags. Keeps Bilibili's own header and follows its dark/light switch. Data from api.bgm.tv/v0, falling back to next.bgm.tv/p1.
 // @author       xmbl4399
@@ -52,7 +52,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.6.6';
+  const VERSION = '1.6.7';
   const NS = 'bgmanime';
   const UA = `bili-anime-replace/${VERSION} (+https://github.com/xmbl4399/bili-bgm-overlay)`;
 
@@ -1237,7 +1237,6 @@ html.bgm-takeover.bgm-keep-header .bgm-search{display:none}
 .bgm-title{display:block;margin-top:6px;font-size:13px;line-height:1.25;color:var(--text);
   text-decoration:none;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .bgm-title:hover{color:var(--accent)}
-.bgm-meta{margin-top:2px;font-size:11px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* ---- 占位/空态 ---- */
 .bgm-ph{height:180px;display:flex;align-items:center;justify-content:center;color:var(--sub);font-size:13px}
@@ -1714,8 +1713,8 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
     t.title = title;
     card.appendChild(t);
 
-    if (it.date) card.appendChild(el('div', 'bgm-meta', it.date));
-
+    // ★ v1.6.7：卡片不再显示首播日期（标题下面那行 `.bgm-meta` 已删，样式一并移除）。
+    //   `it.date` 仍保留在数据里：① 月内排序按它排（sortByDate）；② 悬停封面的 title 里仍带放送日期。
     return card;
   }
 

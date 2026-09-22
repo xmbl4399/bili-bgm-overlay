@@ -35,6 +35,8 @@ try {
   await send('Page.navigate', { url: 'https://www.bilibili.com/anime/' });
   await sleep(9000);
   await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 0, y: 0, button: 'left', clickCount: 1 });   // 唤醒
+  // 等首月卡片真的渲染出来再断言（v1.6.7 起这里也验"卡片无日期行"，没有卡会是假绿）
+  for (let i = 0; i < 40 && !(await ev(`document.querySelectorAll('.bgm-card').length > 0`)); i++) await sleep(500);
   const pt = JSON.parse(await ev(`(()=>{const e=document.querySelector('.bgm-tools .bgm-ibtn:last-child');
     const r=e.getBoundingClientRect(); return JSON.stringify({x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)});})()`));
   for (const type of ['mousePressed', 'mouseReleased'])
@@ -52,6 +54,13 @@ try {
       const s = row.querySelector('select');
       return { value: s.value, opts: [...s.options].map(o => o.value) };
     })(),
+    // v1.6.7：卡片标题下不再有首播日期行。三重判据（任一不为 0 即失败）：
+    //   ① .bgm-meta 节点数；② 卡片 innerText 里出现 YYYY-MM-DD 的卡数
+    //   （悬停用的是 a.title 属性、图上的日期是像素，都不会进 innerText）；③ 卡片数得 > 0，防"页面没加载"式假绿
+    cardMeta: document.querySelectorAll('.bgm-card .bgm-meta').length,
+    cards: document.querySelectorAll('.bgm-card').length,
+    cardsWithDateText: [...document.querySelectorAll('.bgm-card')]
+      .filter(c => /[0-9]{4}-[0-9]{2}-[0-9]{2}/.test(c.innerText)).length,
   })`));
   console.log('设置面板行：');
   info.rows.forEach((r, i) => console.log(`  ${String(i + 1).padStart(2)}. ${r}`));
@@ -77,6 +86,9 @@ try {
     [info.rows.some(r => r.startsWith('隐藏无评分条目') && r.endsWith('☑')), '隐藏无评分默认勾选'],
     [statHas('主题：'), '统计块显示主题判定'],
     [info.panelBg !== 'rgba(0, 0, 0, 0)', '面板底色不透明'],
+    // 卡片无首播日期（v1.6.7）：日期只留在数据层（排序）与悬停 title 里
+    [info.cards > 0 && info.cardMeta === 0 && info.cardsWithDateText === 0,
+      `卡片标题下无首播日期（${info.cards} 张卡 · .bgm-meta ${info.cardMeta} 个 · 含日期文本 ${info.cardsWithDateText} 张）`],
   ];
   let bad = 0;
   for (const [c, l] of ok) { console.log(`  ${c ? '✅' : '❌'} ${l}`); if (!c) bad++; }
