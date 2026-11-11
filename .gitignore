@@ -1,6 +1,8 @@
 # 忽略端到端测试产物（可用 e2e 脚本随时重建）
 tools/.e2e-anime-ext/
 tools/.e2e-anime-out/
+tools/.e2e-cal-ext/
+tools/.e2e-cal-out/
 
 # 临时浏览器 profile
 tools/profile-*/

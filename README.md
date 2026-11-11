@@ -4,6 +4,8 @@
 
 **➡️ [Greasy Fork 一键安装](https://greasyfork.org/zh-CN/scripts/596516-b%E7%AB%99%E7%95%AA%E5%89%A7%E5%8C%BA-bangumi-%E7%95%AA%E5%89%A7%E6%B5%8F%E8%A7%88%E9%A1%B5)** ｜ 源码与反馈：[GitHub](https://github.com/xmbl4399/bili-bgm-overlay)
 
+> **v1.7.0**：**新增「新番表」tab，并排在第一位（TV 之前）** —— 对齐 [newBV-Bangumi](https://github.com/xmbl4399/newBV-Bangumi) 的同名功能：**按星期分组**的本周周历，顺序是**今天 → 往回回溯 7 天**（周三这天就是 `星期三 · 星期二 · 星期一 · 星期日 · 星期六 · 星期五 · 星期四`），首组标题带 `今天` 徽标。它**不是**"某年某月"的索引，所以**年份栏在它下面整条隐藏**，分组标题形如 `星期三 · 今天 · 8 部`；**空分组刻意保留**（"今天没有可显示的番剧"本身就是信息），不像月份那样 0 部就整块删掉。数据走第三条通路 `GET /calendar`（不是 `year&month` 索引），按**在看人数降序**排，独立缓存 **60 分钟**。实测本周 **97 部在播 / 7 天全部有数据**，截图：[新番表](docs/shot-calendar.png)。新增 E2E `tools/e2e-calendar.mjs`（**31 项断言全绿**），接口事实见 [docs/bangumi-calendar-api.md](docs/bangumi-calendar-api.md)。
+>
 > **v1.6.7**：**卡片不再显示首播日期** —— 标题下面那行 `.bgm-meta`（`2026-07-13` 这种）整行删掉，样式 `.bgm-meta` 一并移除，卡片只剩封面 + 标题两行。`it.date` **仍保留在数据里**：月内排序仍按它排、悬停封面的 title 里仍带放送日期（信息没丢，只是不再占版面）。
 >
 > **v1.6.6**：**徽章可读度 + 年份栏紧凑化 + 默认隐藏无评分** —— ① 评分/流派 tag/集数三个徽章改用**同一套基底**：底色 `rgba(0,0,0,.54)` → `.74`、白字 70% → 95%、字重 600、字号各 **+1px**，并补描边 + 投影 + 毛玻璃（旧值在浅色封面上几乎糊成一片）；② 年份栏行内 padding `8→4`、chip 的 padding/gap/字号各降一档、圆角 `14→10`。实测 1280×720：**21 个年份 chip 从「溢出 89px、必须拖动」变成一行放得下**，条高 **40 → 30px**。对照图：[徽章](docs/badge-visibility-compare.png)（720P，上改前/下改后）· [年份栏](docs/yearbar-compact-compare.png)（局部放大 2.5×）。③ **默认隐藏无评分条目**：`hideNoScore` 默认 `false` → `true` —— E2E 实测韩剧 2026 卡片 **71 → 38（−46%）**（Bangumi 尚未开分的新剧占近一半），但每个月仍有条目、**无空月**。TV 2026（v0 原始口径，336 条）少了 **−20%（336 → 270）**，但**分月极不均匀**：1/4/7 月这些"已开分的大季度"只少 1~5%，而 **10 月 −57%（79→34）、11 月全空（2→0）、3/9 月约 −50%** —— 新番要开播之后才陆续开分，所以**临近/未来月份**受影响最大，过一阵会自己缓解。⚠️ 它是**数据层过滤（发生在写缓存之前）**，改动后要**清缓存**才生效 —— 与「封面质量」那种渲染时改写的设置不同（见 [缓存机制](#缓存机制v162-修订)）。
@@ -66,17 +68,18 @@
 | 区域 | 形态 |
 |---|---|
 | **B站 顶栏（保留）** | 首页 / 番剧 / 直播 / 游戏中心 / 会员购 / 漫画 / 赛事 / **搜索框** / 登录 / 大会员 / 消息 / 动态 / 收藏 / 历史 / 创作中心 / 投稿 —— 原封不动留在最上面，能点能搜 |
-| 顶栏（自有） | `● Bangumi` + 二级分类 tab `TV / WEB / OVA / 剧场版 / 日剧 / 欧美剧 / 华语剧 / 韩剧 / 电影`（横向可滚，胶囊选中）+ 主题按钮 `◐/☀/☾` + 设置 ⚙ |
-| 年份栏 | `2026 → 2006` 横向 chip，默认当前年；**紧凑版（v1.6.6）**：1280×720 下一行放得下整 21 个 chip，条高 30px |
-| 主体 | **月份倒序分组**，每组标题 `{m}月 · {N} 部`，下面是响应式网格 |
-| 卡片 | 封面 3:4；**右上角评分徽章**（≥7 金色 `#FFD54F`）；**左上角流派 tag**（二级白名单，最多 2 个）；**左下角集数**（仅 TV）；标题 2 行省略，**标题下不再放首播日期**（v1.6.7 已删；鼠标悬停封面时标题里仍能看到）。三个徽章共用一套基底（v1.6.6）：半透黑 `.74` + 白字 95% + 600 字重 + 描边/投影/毛玻璃 |
+| 顶栏（自有） | `● Bangumi` + 二级分类 tab **`新番表 / TV / WEB / OVA / 剧场版 / 日剧 / 欧美剧 / 华语剧 / 韩剧 / 电影`**（10 个，横向可滚，胶囊选中）+ 主题按钮 `◐/☀/☾` + 设置 ⚙ |
+| 年份栏 | `2026 → 2006` 横向 chip，默认当前年；**紧凑版（v1.6.6）**：1280×720 下一行放得下整 21 个 chip，条高 30px。**「新番表」下整条隐藏（v1.7.0）** |
+| 主体 | **月份倒序分组**，每组标题 `{m}月 · {N} 部`，下面是响应式网格；**「新番表」下改为星期分组**（v1.7.0，见下） |
+| 卡片 | 封面 3:4；**右上角评分徽章**（≥7 金色 `#FFD54F`）；**左上角流派 tag**（二级白名单，最多 2 个）；**左下角集数**（仅 TV；**新番表不显示**，因为周历接口没有话数字段，见下）；标题 2 行省略，**标题下不再放首播日期**（v1.6.7 已删；鼠标悬停封面时标题里仍能看到）。三个徽章共用一套基底（v1.6.6）：半透黑 `.74` + 白字 95% + 600 字重 + 描边/投影/毛玻璃 |
 
-### 分类是怎么映射到 Bangumi 的（v1.6.0）
+### 分类是怎么映射到 Bangumi 的（v1.7.0）
 
-9 个 tab 分属**两种拉取形态** + **两级前端过滤**（探针脚本见 `tools/probe-*.mjs`）：
+10 个 tab 分属**三种拉取形态** + **两级前端过滤**（探针脚本见 `tools/probe-*.mjs`）：
 
 | tab | `type` | `cat` | 拉取形态 | 前端过滤 |
 |---|---|---|---|---|
+| **新番表**（v1.7.0） | — | — | **`GET /calendar`**（周历，不是 year&month 索引） | `hideNoScore` 时不显示无评分条目，但**空分组保留** |
 | TV / WEB / OVA / 剧场版 | 2 | 1 / 5 / 2 / 3 | `type+cat+year+month` | — |
 | 日剧 / 欧美剧 / 华语剧 | 6 | 1 / 2 / 3 | `type+cat+year+month` | — |
 | **电影** | 6 | **（不传）** | `type+year+month` 拉全平台 | `platform === 电影` |
@@ -105,6 +108,106 @@
 
 > 另一个好消息：`platform=电视剧` 里**一条美剧都没有**（美剧有自己的 `platform`）⇒ 没有「非韩剧混进来」的主要来源。
 > **代价须知**：`tagPool` 在 **p1 通路**下只有 `meta_tags`（拿不到用户投票词），命中会大减；v0 通路下命中 `tags ∪ meta_tags`，才是上表的效果。
+
+### ★ 新番表：本周周历（v1.7.0）
+
+「今天在播什么」是打开番剧区最常见的动机，而月份分组答不了这个问题 —— 要先选年、再翻到当月。所以新增一个**不按年/月组织**的分类，**排在第一位（TV 之前）**，点开即用（不用先选年份）。
+> 默认落地的分类仍是 `TV`（`DEFAULTS.mode = 'tv'`），与 newBV-Bangumi 保持一致 —— 它加了新番表之后首页默认 Tab 也仍是非日历那个。老用户存过 `cfg.mode` 的完全不受影响。功能对齐 [newBV-Bangumi](https://github.com/xmbl4399/newBV-Bangumi) 的「新番表」Tab。
+
+#### 三条设计决定
+
+| 决定 | 为什么 |
+|---|---|
+| **顺序是「今天 → 往回回溯」**，不是周一到周日 | 周历的价值在"今天"，把今天放在**第一个**才不用滚。公式 `((today-1-offset)%7+7)%7+1`，周三即 `[3,2,1,7,6,5,4]`（周三 → 周二 → 周一 → **周日** → 周六 → 周五 → 周四） |
+| **年份栏整条隐藏**（`.bgm-cal-mode .bgm-years{display:none}`） | 周历没有年份维度。留着一条不起作用的 21 个 chip 是纯噪音。切回其它分类自动恢复 |
+| **空分组保留**，不像月份那样删掉 | 月份 0 部 → 整块 `sec.remove()`（TV 常年 5/6/8/9 月空，留着白占几屏）；但**"今天没有可显示的番剧"本身是有效信息**，删掉会让人以为页面没加载完 |
+
+#### 首组标题长这样
+
+```
+星期三  今天   8 部
+```
+
+`.bgm-week-h` 是 `position:sticky; top:0`（滚动时星期标题吸顶，周历长列表不会失去分组感）。`今天` 是 `.bgm-week-today` 胶囊徽标，只在 `orderFrom()` 的第一组渲染一次。
+
+#### 数据通路：第三条，与「二、数据通路」里那两个 year&month 索引无关
+
+```
+GET https://next.bgm.tv/p1/calendar     ← 优先（99 KB，对象，键 '1'…'7'）
+GET https://api.bgm.tv/calendar         ← 兜底（85 KB，数组）
+```
+
+**这里刻意与主页面相反：p1 优先、v0 兜底**（主页面是 v0 优先）。两个理由：
+
+- p1 带 **`metaTags`**（覆盖 86~96% 条目）和 `info`（文本里能反解放送日期，集数只能抠出约 62%，见下）⇒ 卡片上的 **tag 徽章有内容**；
+- v0 的周历项**没有 `tags`/`meta_tags`/话数**，且 `images` 全是 **`http://`**（须升 https，实测升级后可取）。
+
+两端点响应头都是 `access-control-allow-origin: *` + `cache-control: max-age=3600` —— 但我们仍走 `GM_xmlhttpRequest` 统一处理超时与错误。
+
+| 差异点 | v0 `/calendar` | p1 `/p1/calendar` |
+|---|---|---|
+| 顶层结构 | 数组（7 项） | **对象**，键 `'1'`…`'7'` |
+| 分组键 | `weekday.id`（1=周一 … 7=周日） | 顶层键本身 |
+| 条目字段 | `id/name/name_cn/air_date/rating/images/collection.doing` | 包一层 `{watchers, subject:{…}}` |
+| 内容 tag | ❌ 无 | ✅ `subject.metaTags` |
+| 话数 / 日期 | ❌ 只有 `air_date` | 日期 ✅；话数**只能正则抠**，覆盖 61.6% |
+| 封面协议 | **`http://`**（须升 https） | 已是 `https://` |
+
+`normalizeCalendar()` 同时吃这两种形态（按"是数组还是对象"分流），过滤 `id == null` 与（`hideNoScore` 时）无评分条目，**保留空分组**，格式不认识就 `throw new Error('周历响应格式不认识')`。
+
+#### 排序：在看人数（doing）降序
+
+**刻意没用 `compareItems`**（那套是评分降序）。周历的正确排序是"当前热度"，评分对未开播/刚开播的新番极不稳定；`collection.doing`（v0）/ `watchers`（p1）就是现成的在看人数。实测差异极大（个位数 ~ 1.6 万），降序后排出来的首屏确实是当季主力番。
+
+> 注意：接口**原序并不严格等于** doing 降序（实测周一是 `6, 1194, 1, 2234, …`），所以必须自己排，不能直接吃返回顺序。
+
+#### 集数徽章：新番表下刻意关掉（`showEpisodes: false`）
+
+周历接口**没有集数字段** —— v0 项里根本没有 `eps`，p1 项的 `subject` 也没有。唯一来源是 p1 的 `info` 文本：
+
+```
+"12话 / 2026年10月5日 / 有山リョウ / 六つ花えいこ / 石川雅一"
+        ↑ 正则 /(\d{1,4})\s*话/ 从这里抠
+```
+
+实测（2026-11-11，全周 112 条）：
+
+| 项 | 结果 |
+|---|---|
+| `info` 里能抠出集数 | **69 条（61.6%）** |
+| 抠不出 | **43 条（38.4%）** |
+| 这 43 条打详情接口 `next.bgm.tv/p1/subjects/{id}` 能补到吗 | **0 条** —— `eps = 0` 且 `infobox` 的「话数」是 `*`（Bangumi 自己没录） |
+
+所以补拉零收益，而一屏里 6 成有、4 成没有的混排反而显得页面不一致 ⇒ **新番表整列不显示集数徽章**（`MODES` 里 `calendar` 的 `showEpisodes` 为 `false`）。TV 等分类不受影响，照常显示。
+
+#### 缓存
+
+| 项 | 值 |
+|---|---|
+| 键 | `w:calendar`（与逐月的 `m:{分类}:{年}:{月}` 分开） |
+| 时效 | **60 分钟**（`CAL_TTL`，与接口自己的 `max-age=3600` 对齐 —— 周历变化慢，没必要更频繁） |
+| 条目量 | 全周约 112 条，一个键装下，**不用逐日缓存** |
+| 清缓存 | 「清空缓存并重载」会一起清掉，且若当前正停在新番表就**直接重载周历** |
+
+设置面板状态块显示 `缓存月份：N 条 · 新番表：已缓存/无`，B站 头像弹层的状态行同步显示 `新番表 缓存中/待拉取`。
+
+#### 实测（2026-11-11，`tools/e2e-calendar.mjs`）
+
+| 断言 | 结果 |
+|---|---|
+| tab 总数 / 第一项 / 第二项 | 10 / `新番表(calendar)` / `TV(tv)` ✅ |
+| 星期分组数 / 月份分组残留 | 7 / 0 ✅ |
+| 首组是今天 / `今天` 徽标只 1 个 | ✅ / ✅ |
+| `orderFrom()` 与 DOM 顺序一致 | `[3,2,1,7,6,5,4]` === DOM ✅ |
+| 卡片数 / 封面全 https | **97** / ✅ |
+| 评分徽章 / tag 徽章 | ✅ / ✅ |
+| 集数徽章 | **不显示**（周历无 `eps`，`info` 只覆盖 61.6%，补拉 43/43 全空） |
+| 页脚 | `本周 97 部在播 · 数据来自 p1 · 缓存 60 分钟` ✅ |
+| 年份栏 `display:none` 且高度 0 | ✅ |
+| 切回 TV：年份栏回来、星期分组清零、月份分组回来 | 32px / 0 / 11 ✅ |
+| 本脚本 console 报错 | **0** ✅ |
+
+本周（2026-11-11 周三）每日在播：周三 8 · 周二 10 · 周一 11 · 周日 26 · 周六 18 · 周五 14 · 周四 10。
 
 ### 过滤 + 分页的一个坑（v1.5.0 修）
 
@@ -198,7 +301,7 @@ meta_tags ["TV","日本","原创" × ≤10]  摘要   ┘
 
 ### 720P 屏幕适配（v1.6.0）
 
-分类涨到 **9 个**后，顶栏在 720P（1280×720，实际视口约 1265px）下必须一分不浪费。做法：
+分类涨到 **9 个**后（v1.7.0 变成 **10 个**，见下表末行），顶栏在 720P（1280×720，实际视口约 1265px）下必须一分不浪费。做法：
 
 | 手段 | 说明 |
 |---|---|
@@ -215,6 +318,17 @@ meta_tags ["TV","日本","原创" × ≤10]  摘要   ┘
 | 1366×768 | 1 ✅ | 514 / 1145 | 49px | 显示 |
 | 1024×768 | 1 ✅ | 420 / 832 | 49px | 显示 |
 | 800×600 | 1 ✅ | 390 / 696 | 47px | 隐藏（圆点保留） |
+
+**v1.7.0 复测（加了第 10 个 tab「新番表」后，`tools/e2e-calendar.mjs` F 段）**：
+
+| 视口 | tab 行数 | tab 行横向 `scrollWidth/clientWidth` | tab 行高 | 顶栏高 | 品牌文字 |
+|---|---|---|---|---|---|
+| 1280×720（720P） | 1 ✅ | 1062 / 1062（**仍放得下，无需拖动**） | 30px | 47px | 显示 |
+| 1366×768 | 1 ✅ | 1145 / 1145 | 30px | 49px | 显示 |
+| 1024×768 | 1 ✅ | 832 / 832 | 27px | 49px | 显示 |
+| 800×600 | 1 ✅ | 696 / 696 | 27px | 47px | 隐藏（圆点保留） |
+
+> 关键结论：**从 9 个 tab 加到 10 个，1280×720 下依然一行放得下、不触发横向滚动** —— 因为 `.bgm-mode` 的 padding/字号本来就是 `clamp()` 连续收缩的，多一个 tab 只是让每个 tab 再窄一点，没有跨过断点。`scrollWidth == clientWidth` 说明拖拽被 `enableDragScroll` 主动短路，这是正确行为。
 
 ### 顶栏 / 年份栏的横向滑动（v1.6.1）
 
@@ -250,6 +364,7 @@ meta_tags ["TV","日本","原创" × ≤10]  摘要   ┘
 |---|---|
 | 点卡片 / 标题 | 打开 **B站搜索结果页** `search.bilibili.com/all?keyword=<name_cn 优先>…` |
 | 卡片上右键 | 复制该关键词 |
+| 点「新番表」tab（v1.7.0） | 切到本周周历：7 个星期分组、今天在最前、年份栏隐藏；再点其它 tab 自动恢复 |
 | 顶栏搜索框回车 | 直接跳 B站搜索（保留 B站 表头时用 B站 自己那个搜索框） |
 | 悬停封面 | 浮出完整信息：中文名 / Bangumi 评分 / 排名 / 放送日期 |
 | ⚙ | 设置面板：**保留 B站 顶栏**、评分/tag/集数开关、**Tier3 兜底开关（默认关）**、**主题（跟随/强制）**、**详情补拉（默认关）**、**隐藏无评分（默认开）**、**数据通路（v0 优先）**、并发、单月翻页上限、清缓存、恢复 B站 原页面 |
@@ -258,9 +373,10 @@ meta_tags ["TV","日本","原创" × ≤10]  摘要   ┘
 ### 加载策略
 
 - **逐月流式 + 懒加载**：进入视口前 400px 才拉该月，其余月份只占位 —— 首屏只发 1–2 个请求。
-- **缓存**：命中缓存秒出（当年 12h、历史年份 30d，可在设置面板改）。
-- **空月份直接隐藏**：TV 番集中在 1/4/7/10 月首播，5/6/8/9 月常年 0 部，留着会白占几屏。
-- **分类/年份切换**用 `loadToken` 作废旧请求，避免串台。
+- **新番表不用懒加载**（v1.7.0）：全周只有 **1 个请求 / 约 97 部**，进 tab 就一次性拉完、7 个分组一起渲染 —— 拆成 7 个懒加载只会让"今天"那组也等网络。首屏先铺 7 组骨架，数据到了整块替换。
+- **缓存**：命中缓存秒出（当年 12h、历史年份 30d，可在设置面板改；新番表固定 60min）。
+- **空月份直接隐藏**：TV 番集中在 1/4/7/10 月首播，5/6/8/9 月常年 0 部，留着会白占几屏。**新番表的空星期不隐藏**（见上文「空分组要保留」）。
+- **分类/年份切换**用 `loadToken` 作废旧请求，避免串台（新番表同样吃 `loadToken`，快速来回切不会串）。
 
 ### ★ 封面质量（v1.6.4）—— 比换接口值钱得多
 
@@ -309,6 +425,7 @@ r100 明显发虚、r400 起海报小字清晰可读 ⇒ 默认取 `r200`（2× 
 | 历史年数据 | **30 天** | 缓存时效 · 历史年（1d / 7d / 30d / 90d / 1年） |
 | **空结果** | **30 分钟** | 固定（不可调） |
 | 详情补拉 `d:{id}` | 30 天 | 跟随"历史年" |
+| **新番表周历 `w:calendar`**（v1.7.0） | **60 分钟** | 固定（不可调，与接口 `max-age=3600` 对齐） |
 
 「当年 / 历史年」是**动态判定**的：`ttlOf(year)` 每次比较时现算 `new Date().getFullYear()`，所以跨年零时后旧年份自动从 12h 降级为 30d，无需人工干预。
 
@@ -327,6 +444,7 @@ r100 明显发虚、r400 起海报小字清晰可读 ⇒ 默认取 `r200`（2× 
 **★ 索引与淘汰**：所有写过的键登记在 `cacheKeys` 数组里，供「清空缓存」遍历删除，上限 **2000 条**。
 溢出时**必须连同数据一起删掉**被挤出的键 —— 只做 `slice(-2000)` 会让那些键「数据还在、索引没了」，**「清空缓存」永远删不到它们（永久泄漏）**。
 本项目 9 分类 × 12 月 × 约 20 年 ≈ 2100+ 条，已经贴着上限，因此这是个真实会触发的问题。
+（v1.7.0 的新番表**只有 1 个键** `w:calendar`，不参与这个乘法 —— 它不按月分片。）
 
 **清理入口**：设置面板 **「清空缓存并重载」**，或 Tampermonkey 菜单命令。
 
@@ -402,6 +520,26 @@ GET https://next.bgm.tv/p1/subjects?type=2&cat=1&year=2024&month=7&page=1
 
 顺带纠正两个容易搞错的 B站接口事实（写在这里省得再踩）：`api.bilibili.com/pgc/*` 系列对 `Origin: www.bilibili.com` **放行 CORS**（同域，普通 fetch 可用）；但它的番剧索引 `pgc/season/index/result` **只认 `season_month`（1/4/7/10），`year` 参数不生效** —— 所以它做不了"按年份浏览"，这也是最后没选它当数据源的原因。
 
+### ⑤ `GET /calendar` —— 新番表专用（v1.7.0）
+
+第三条通路，**与上面两条的 `year&month` 索引完全无关**：一次请求拿回全周 7 天的在播条目，无需任何参数。
+
+| 端点 | 体积 | 顶层形态 | 内容 tag | 话数 | 封面前缀 |
+|---|---|---|---|---|---|
+| `next.bgm.tv/p1/calendar`（**优先**） | 99 KB | **对象**（键 `'1'`…`'7'`） | ✅ `subject.metaTags`（覆盖 86~96%） | ✅ `info` 可解析 | https |
+| `api.bgm.tv/calendar`（兜底） | 85 KB | **数组**（7 项，`{weekday,items}`） | ❌ 无 | ❌ 无 | **http**（须升级） |
+
+**这里刻意与主页面相反（p1 优先）** —— 因为 p1 的周历项多带 `metaTags` 与 `info`，卡片上的 tag 徽章才有内容；v0 的两样都没有。
+
+三个必须自己处理的点（细节与完整最小实现见 **[docs/bangumi-calendar-api.md](docs/bangumi-calendar-api.md)**）：
+
+1. **顺序**：接口原序**不严格等于**在看人数降序（实测周三开头是 `6, 1194, 1, 2234`）⇒ 必须自己按 `collection.doing` / `watchers` 排。
+2. **分组**：用「今天 → 往回回溯」的 `((today-1-offset)%7+7)%7+1`，**不要**周一→周日；注意 JS `getDay()` 里周日是 `0`，要写成 `now.getDay() || 7`。
+3. **空分组保留**：与月份相反 —— 「今天没有可显示的番剧」本身是信息，7 组恒在，只把内容区换成一句说明。
+
+响应头同样是 `access-control-allow-origin: *` + `cache-control: max-age=3600`，所以我们自己按 **60 分钟**缓存（键 `w:calendar`，一个键装全周约 112 条）。
+
+
 ---
 
 ## 三、已验证结果（2026-09-19）
@@ -465,6 +603,23 @@ GET https://next.bgm.tv/p1/subjects?type=2&cat=1&year=2024&month=7&page=1
 >
 > 第 9 / 10 步则是**保留 B站 顶栏**的专项断言（几何 / 皮肤 / 层叠 / 可逆），见上表。
 
+### v1.7.0 专项验证（新番表 / 周历）
+
+`node tools/e2e-calendar.mjs`（独立 E2E，**35 项断言全绿**）。都用真实 `www.bilibili.com/anime/` + CDP 真实鼠标点击：
+
+| 断言组 | 结果 |
+|---|---|
+| A) tab 顺序 | 共 **10** 个，第 1 个 `新番表(calendar)`、第 2 个 `TV(tv)` ✅ |
+| B) 切到新番表 | 根节点有 `bgm-cal-mode`；`.bgm-years` `display:none` 且高 **0**；星期分组 **7** 个、月份分组 **0** 个；`今天` 徽标**只有 1 个**且落在首组 ✅ |
+| B) 卡片 | **97** 张；封面**全部 https**；评分/tag 徽章都在；**集数徽章 0 个**（刻意关掉）；`.bgm-cal-foot` 文案 `本周 97 部在播 · 数据来自 p1 · 缓存 60 分钟`；无 `.bgm-err` ✅ |
+| C) 顺序正确性 | 隔离世界里 `orderFrom()` = `[3,2,1,7,6,5,4]`，与 DOM 中 7 个 `.bgm-week` 的 `data-weekday` **逐个相等**；首元素 = 今天；是 1..7 的完整排列 ✅ |
+| D) 缓存/通路 | `readCalendarCache()` 命中；`netStats.bySource` 含 p1；`errBySource` 空 ✅ |
+| E) 切回 TV | `bgm-cal-mode` 摘掉；年份栏恢复（高 **32px**）；星期分组归零；月份分组回来（11 个）✅ |
+| F) 720P 适配 | 1280×720 / 1366×768 / 1024×768 / 800×600 **四档 tab 全部只有一行**（1280×720 下 `scrollWidth == clientWidth` = 1062/1062，**仍放得下**）✅ |
+| G) 异常 | 本脚本 console 报错 **0** 条 ✅ |
+
+**第二次运行**（缓存命中）：`netStats.bySource = {}`、`cached = true`，其余断言仍全绿 ⇒ 缓存确实优先生效、不重复打网络。
+
 ### v1.4.0 专项验证（v0 通路 / 零补拉 / 配置迁移）
 
 `node tools/e2e-anime-cdp.mjs`（全量回归）+ `node tools/check-migration.mjs`（配置迁移）全绿：
@@ -508,15 +663,18 @@ GET https://next.bgm.tv/p1/subjects?type=2&cat=1&year=2024&month=7&page=1
 ## 四、开发者
 
 ```
-bili-anime-replace.user.js                脚本本体（单文件，v1.6.1，含 __BGM_ANIME__ 调试钩子）
+bili-anime-replace.user.js                脚本本体（单文件，v1.7.0，含 __BGM_ANIME__ 调试钩子）
 docs/greasyfork-intro.md                  ★ Greasy Fork 发布简介（面向用户，可直接粘到脚本页 Description）
 docs/bangumi-v0-api-guide.md              ★ v0 列表接口完整方案（请求/字段/清洗四步/词表/坑清单/最小实现，可移植）
+docs/bangumi-calendar-api.md              ★ 周历接口 `GET /calendar` 完整方案（v0 数组 vs p1 对象、today→回溯的排序公式、空分组保留、最小实现，可移植）
 docs/tier-whitelist-design.md             二级白名单设计方案（可移植：方法 + 词表 + 陷阱清单）
 docs/bangumi-list-api-facts.md            接口字段事实（tags vs meta_tags 真实样本 + 参数语义对照）
 tools/e2e-anime.mjs                       E2E：临时 MV3 扩展（含 GM_xhr 背景页桥接）+ 无头 Edge + DOM 统计
 tools/e2e-anime-cdp.mjs                   交互 E2E：CDP 派真实鼠标事件 + ✓/✗ 断言；第 1~7 步功能、第 8 步浮层可见性、
                                           第 9 步保留表头（几何/皮肤/层叠）、第 10 步可逆性；错误靠 CDP 原生事件收
 tools/e2e-theme.mjs                       主题 E2E：真把 B站 主题 CSS 换成 dark.css → 验判定链/桥接变量/真像素/状态行
+tools/e2e-calendar.mjs                    ★ 新番表 E2E（v1.7.0）：tab 排首位 / 星期分组=7 / 今天在最前 / orderFrom 与 DOM
+                                          一致 / 年份栏隐藏 / 封面全 https / 页脚统计 / 切回 TV 恢复 / 4 档视口不换行；35 项断言
 tools/check-settings.mjs                  设置面板自检：新增项（Tier3 开关 / 主题）与统计块是否渲染、面板底色是否不透明
 tools/check-migration.mjs                 ★ 配置迁移验证：塞 v1.3.0 老配置 → 断言被纠正、且只跑一次
 tools/png-pixel.mjs                       零依赖 PNG 像素读取（断言"画出来是什么颜色"，不只信计算样式）
@@ -542,6 +700,7 @@ tools/sniff-api.mjs                       CDP 抓包：拿真实网页发出的 
 node tools/e2e-anime.mjs "https://www.bilibili.com/anime/" --budget=45000
 node tools/e2e-anime-cdp.mjs "https://www.bilibili.com/anime/"
 node tools/e2e-theme.mjs                              # 主题 + 状态行 + 白名单回归
+node tools/e2e-calendar.mjs                           # 新番表（周历）：35 项断言，含 4 档视口
 node tools/check-migration.mjs                        # 配置迁移（塞老配置 → 断言纠偏 + 只跑一次）
 node tools/empty-card-audit.mjs 2026                  # 空卡构成 + 补词判据（读缓存，零请求）
 node tools/whitelist-tiers.mjs 2026,2025,2024,2023 --eval=2024
@@ -550,10 +709,10 @@ node tools/tag-tier-audit.mjs 2023                    # 逐条审计（读缓存
 
 **GM_xhr 未就绪时的降级**：脚本在无 `GM_xmlhttpRequest` 的环境里会退回 `fetch`，但 `api.bgm.tv` / `next.bgm.tv` 都没有 CORS 头，**此时页面内必然取不到数据**（会显示"加载失败 + 重试"）。这是环境限制，不是脚本 bug —— 正常装在 Tampermonkey 里不会遇到。
 
-**调试钩子**：页面 F12 控制台里 `__BGM_ANIME__` 暴露 `parseInfo / pickTags / hasGenreTag / displayTitle / searchKeyword / normScore / fromP1 / fromV0 / monthsOf / compareItems / loadMonth / activeSources / netStats / view / selectMode / selectYear / startTakeover / stopTakeover / applyShellMode / syncHeaderVars / headerBar / hideCss`，以及主题与状态行模块 `luminance / detectDark / applyTheme / onTheme / themeDark() / syncThemeBtn / ensureStatusItem / updateStatusItem / statusLabel / statusTip`。白名单数据 `TAG_T1 / TAG_T2 / TAG_T3 / TAG_GROUP / TAG_WHITELIST` 也在上面，可直接在控制台调 `pickTags(['TV','日本','奇幻'], 2)` 验证分级效果。
+**调试钩子**：页面 F12 控制台里 `__BGM_ANIME__` 暴露 `parseInfo / pickTags / hasGenreTag / displayTitle / searchKeyword / normScore / fromP1 / fromV0 / monthsOf / compareItems / loadMonth / activeSources / netStats / view / selectMode / selectYear / startTakeover / stopTakeover / applyShellMode / syncHeaderVars / headerBar / hideCss`，以及主题与状态行模块 `luminance / detectDark / applyTheme / onTheme / themeDark() / syncThemeBtn / ensureStatusItem / updateStatusItem / statusLabel / statusTip`。**新番表模块（v1.7.0）**另有 `WEEKDAYS / todayWeekday / orderFrom / CAL_TTL / fromCalV0 / fromCalP1 / normalizeCalendar / compareCalendar / loadCalendar / readCalendarCache / renderCalendar` —— 控制台里 `orderFrom()` 能直接看到「今天 → 回溯」的实际顺序，`readCalendarCache()` 看缓存键。白名单数据 `TAG_T1 / TAG_T2 / TAG_T3 / TAG_GROUP / TAG_WHITELIST` 也在上面，可直接在控制台调 `pickTags(['TV','日本','奇幻'], 2)` 验证分级效果。
 （⚠️ 必须经 `unsafeWindow` 挂到页面 window 才算数 —— 油猴沙箱里的 `window` 和页面 `window` 不是同一个对象，只写沙箱那份的话控制台里读不到。）
 
-**待办**：`WEB/OVA/剧场版` 在历史年份的覆盖抽查；**登录态下实机确认 B站 头像弹层里的状态行**（E2E 用的是符合 B站 CSS 契约的桩容器，未登录时该面板不渲染）；**GitHub 改动后同步 Greasy Fork**（Greasy Fork 不会自动拉本仓库，手动上传 `bili-anime-replace.user.js` 或配 Webhook）。
+**待办**：`WEB/OVA/剧场版` 在历史年份的覆盖抽查；**登录态下实机确认 B站 头像弹层里的状态行**（E2E 用的是符合 B站 CSS 契约的桩容器，未登录时该面板不渲染）；**GitHub 改动后同步 Greasy Fork**（Greasy Fork 不会自动拉本仓库，手动上传 `bili-anime-replace.user.js` 或配 Webhook）；**v1.7.0 新番表**在真机 Tampermonkey 下过一遍（E2E 用临时 MV3 扩展 + GM 桥接，语义等价但非同一运行时），并观察跨周后（周一零点、以及 1/4/7/10 换季）分组是否仍正确。
 
 > **Greasy Fork 提交注意**：脚本元数据同时给了 `@name` / `@name:en` / `@description` / `@description:en`。**只要出现了任一带语言后缀的键（如 `@name:en`），Greasy Fork 就会为该语言建一个本地化条目，此时该语言的 `@description:xx` 也必须有值**，否则报「@description:en 不能为空字符」。若不想维护英文描述，直接删掉 `@name:en` 即可。
 

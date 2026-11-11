@@ -2,9 +2,9 @@
 // @name         B站番剧区 → Bangumi 番剧浏览页
 // @name:en      Bilibili Anime Section → Bangumi Browser
 // @namespace    https://github.com/xmbl4399/bili-bgm-overlay
-// @version      1.6.7
-// @description  拦截 www.bilibili.com/anime/，把番剧区换成自制的 Bangumi 浏览页：TV/WEB/OVA/剧场版 + 日剧/欧美剧/华语剧/韩剧/电影 九分类、年份栏 + 月份倒序分组、封面评分/流派徽章；默认保留 B站 自己的顶栏（首页/番剧/搜索/头像），内容区排在它下面；主题跟随 B站 自己的深/浅色开关；在 B站 头像弹层里放一条状态行；点击卡片跳 B站搜索，右键复制标题。数据源以 api.bgm.tv/v0 为主（列表接口自带全量 tags，一次请求即可筛出流派），失败时自动回落 next.bgm.tv/p1。
-// @description:en  Replaces Bilibili's anime section with a Bangumi browsing page: TV/WEB/OVA/Movie plus Japanese/Western/Chinese drama and live-action film categories, year bar, month groups in reverse order, and cover badges for score and genre tags. Keeps Bilibili's own header and follows its dark/light switch. Data from api.bgm.tv/v0, falling back to next.bgm.tv/p1.
+// @version      1.7.0
+// @description  拦截 www.bilibili.com/anime/，把番剧区换成自制的 Bangumi 浏览页：新番表（本周周历，今日倒序）+ TV/WEB/OVA/剧场版 + 日剧/欧美剧/华语剧/韩剧/电影 共十字类、年份栏 + 月份倒序分组、封面评分/流派徽章；默认保留 B站 自己的顶栏（首页/番剧/搜索/头像），内容区排在它下面；主题跟随 B站 自己的深/浅色开关；在 B站 头像弹层里放一条状态行；点击卡片跳 B站搜索，右键复制标题。数据源以 api.bgm.tv/v0 为主（列表接口自带全量 tags，一次请求即可筛出流派），失败时自动回落 next.bgm.tv/p1。
+// @description:en  Replaces Bilibili's anime section with a Bangumi browsing page: a weekly airing calendar (today first) plus TV/WEB/OVA/Movie and Japanese/Western/Chinese drama and live-action film categories, year bar, month groups in reverse order, and cover badges for score and genre tags. Keeps Bilibili's own header and follows its dark/light switch. Data from api.bgm.tv/v0, falling back to next.bgm.tv/p1.
 // @author       xmbl4399
 // @homepageURL  https://github.com/xmbl4399/bili-bgm-overlay
 // @supportURL   https://github.com/xmbl4399/bili-bgm-overlay/issues
@@ -26,18 +26,23 @@
 /**
  * 设计规格（1:1 对齐 PiliPlus 的 lib/pages/bangumi_browse/ 与 blbl 的新番表）
  *
- * 页面结构  二级 tab（TV/WEB/OVA/剧场版/日剧/欧美剧/华语剧/韩剧/电影，共 9 个）→ 年份栏（横向 chip）→ 月份倒序分组（{m}月 · N 部）
+ * 页面结构  二级 tab（新番表/TV/WEB/OVA/剧场版/日剧/欧美剧/华语剧/韩剧/电影，共 10 个）
+ *           → 年份栏（横向 chip；**新番表下整条隐藏**，它没有年份维度）
+ *           → 月份倒序分组（{m}月 · N 部）／新番表下改为**星期分组**（今天 → 往前回溯 7 天）
  * 表头     默认**保留 B站 自己的那排顶栏**（首页/番剧/直播/搜索/头像…），内容区下移到它下面；
  *           做法是给 `.bili-header__bar` 补上 B站 自身的 `slide-down`（实底皮肤），不自己覆盖它的配色。
  *           见下方 §4b —— 侧栏设置里可关掉，关掉就退回"整页铺满、连表头一起藏"。
- * 顶栏适配 9 个分类在 720P 下要挤在一行 ⇒ 尺寸全走 clamp() 连续收缩、tab 行允许横向滚动
+ * 顶栏适配 10 个分类在 720P 下要挤在一行 ⇒ 尺寸全走 clamp() 连续收缩、tab 行允许横向滚动
  *           （绝不 wrap），品牌文字在窄屏让位只留圆点。见 §5「顶栏」的算例注释。
+ *           （9 个时 1280×720 已放得下；加到 10 个后实测仍放得下，无横向溢出，见 tools/e2e-calendar.mjs F 段）
  * 卡片      封面 3:4；右上角评分徽章（≥7 金色 #FFD54F，否则白 70%）；左上角流派 tag（白名单，最多 2）
  *           左下角集数（仅 TV）；标题 2 行省略
  * 交互      点击卡片 → B站搜索结果页（关键词 name_cn || name）；右键/长按 → 复制关键词
  * 加载      逐月流式：进入视口才拉该月，命中缓存秒出（当年 12h / 历史年 30d）
  *
- * 数据通路（2026-09 实测）
+ * 数据通路（2026-09 实测，逐月索引用）
+ *   ★ 新番表（周历）走的是第三条:**`GET /calendar`**（v0 85KB / p1 99KB，见 §3.4），
+ *     与下面的 `year&month` 索引无关，也不受年份栏影响。
  *   ① next.bgm.tv/p1/subjects?type=&cat=&year=&month=&page=N   ← 每页 24 条，total=页数
  *   ② api.bgm.tv/v0/subjects?type=&cat=&year=&month=&limit=&offset=  ← 每页 100 条
  *   两个接口都无 CORS 头，浏览器必须走 GM_xmlhttpRequest（特权请求）。
@@ -52,7 +57,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.6.7';
+  const VERSION = '1.7.0';
   const NS = 'bgmanime';
   const UA = `bili-anime-replace/${VERSION} (+https://github.com/xmbl4399/bili-bgm-overlay)`;
 
@@ -78,6 +83,19 @@
    * `tagFilter`: 按**候选词池** `tagPool` 做前端过滤（正则；与 `filter` 是 **AND** 关系）
    */
   const MODES = [
+    /**
+     * 「新番表」—— 不是「按月倒序查某一年的全部番」，而是**这一周每天播什么**。
+     * 它是唯一**不看年份栏**的分类：数据来自另一个端点 `GET /calendar`（周历），
+     * 与 `year/month` 无关，所以 selectYear 在它这里直接 return（见 selectMode / renderYear）。
+     * 排在最前面 = 打开就看「今天有什么番」，这也是 newBV-Bangumi 里新番表排首位的原因。
+     *
+     * ★ `showEpisodes: false` —— 周历接口**没有**集数字段（v0 无 `eps`、p1 也无 `eps`）。
+     *   唯一来源是 p1 的 `info` 文本（`"12话 / 2026年10月5日 / …"`）里正则抠「N话」，
+     *   实测 112 条只有 **69 条（61.6%）** 抠得到；剩下 43 条逐个打详情接口核过，
+     *   `eps=0` 且 `infobox` 的「话数」是 `*`（Bangumi 自己没录）⇒ 补拉零收益。
+     *   一屏里 6 成有、4 成没有的混排反而显得页面不一致，故整列关掉（TV 分类照常有集数）。
+     */
+    { key: 'calendar', label: '新番表', calendar: true, showTags: true, showEpisodes: false },
     // —— 动画 type=2：cat 干净，服务端即分类 ——
     { key: 'tv', label: 'TV', type: 2, cat: 1, showTags: true, showEpisodes: true },
     { key: 'web', label: 'WEB', type: 2, cat: 5, showTags: true, showEpisodes: false },
@@ -247,7 +265,8 @@
      * ⚠️ 索引上限 2000 条，溢出时**必须连同数据一起删掉**被挤出的键：
      *    只做 `slice(-2000)` 的话，那些键会「数据还在、索引没了」，
      *    「清空缓存」永远遍历不到它们 ⇒ **永久泄漏**。
-     *    （9 分类 × 12 月 × 约 20 年 ≈ 2100+ 条，已经把 2000 顶到边上。）
+     *    （9 分类 × 12 月 × 约 20 年 ≈ 2100+ 条，已经把 2000 顶到边上；
+     *      新番表只占 1 个键 w:calendar，不参与这个乘法。）
      */
     rememberKey(k) {
       const idx = store.get('cacheKeys', []);
@@ -736,6 +755,229 @@
   }
 
   /* ==================================================================== *
+   * 3.4 新番表（Bangumi 周历）—— 第三个数据端点
+   *
+   * 与 §2 的「按月索引」完全是另一条路：
+   *   ① v0  `GET api.bgm.tv/calendar`      → 长度 7 的数组，元素 `{weekday:{en,cn,ja,id}, items:[…]}`
+   *   ② p1  `GET next.bgm.tv/p1/calendar`  → 一个**以星期 id 为键**的对象，元素 `{watchers, subject:{…}}`
+   *   两路字段不对齐（见下方 `CAL_P1_MAP`），所以各写一个归一化函数，吐同一个内部模型。
+   *
+   * ★ 实测（2026-11-11，tools/probe-calendar.mjs）：
+   *   - v0 响应 85 080 B，p1 响应 98 712 B（p1 多一个 `info` 字段，能反解出集数与首播日期）
+   *   - v0 每日条数 14/10/12/11/14/24/27；p1 14/11/12/11/14/23/27 —— **两者不是逐日相等的**，
+   *     以当前年份为准的差异来自「哪天算在播」（见下「两端点的取舍」）
+   *   - 响应带 `access-control-allow-origin: *` ⇒ 其实普通 fetch 也能拿；但仍统一走
+   *     `httpText()`（GM_xhr 优先），与其余通路保持同一条隧道，别为它单开特例
+   *   - `cache-control: max-age=3600` ⇒ 我们自己按 1 小时缓存（`CAL_TTL`）
+   *
+   * ★ 两端点的取舍（为什么不单纯沿用 §2 的「v0 优先」顺序）：
+   *   - v0 **没有 tag、没有 eps**，`images.*` 还是 **http://**（页面上 https 会直接
+   *     被混合内容策略拦掉 ⇒ 必须自己升协议，见 `fromCalV0`）
+   *   - p1 有 `metaTags`（86~96% 覆盖）+ `info`（可反解 `12话 / 2026年4月5日 / …`）
+   *   - ⇒ **p1 优先**（信息更全），v0 兜底。这与 §2 相反，理由不同、不矛盾：
+   *     §2 要的是「全量投票 tag」，那只有 v0 的 `tags` 字段给；周历这边 p1 反而更全。
+   *     刻意**不**给新番表加设置项（不新增「周历通路」下拉）：一个下拉换来的是两套
+   *     卡面信息量，用户很难理解；按能力选路才是对用户透明的做法。
+   * ==================================================================== */
+
+  /** Bangumi 星期枚举。`id` 与 `java.time.DayOfWeek.value` 对齐（1 = 周一 … 7 = 周日） */
+  const WEEKDAYS = [
+    { id: 1, cn: '星期一', short: '周一' },
+    { id: 2, cn: '星期二', short: '周二' },
+    { id: 3, cn: '星期三', short: '周三' },
+    { id: 4, cn: '星期四', short: '周四' },
+    { id: 5, cn: '星期五', short: '周五' },
+    { id: 6, cn: '星期六', short: '周六' },
+    { id: 7, cn: '星期日', short: '周日' },
+  ];
+
+  /** 今天是周几（1 = 周一 … 7 = 周日）；用本地时间，跨时区看番表才符合直觉 */
+  const todayWeekday = (now = new Date()) => now.getDay() || 7;
+
+  /**
+   * 「今日倒序」—— 以今天为起点**向前回溯** 7 天。
+   *
+   * 语义（对齐 newBV-Bangumi 的 `BangumiWeekday.orderFrom`）：今天周三 ⇒ 周三、周二、周一、
+   * 周日、周六、周五、周四。用户的阅读顺序是「今天在播什么 → 昨天 → 更早」，所以不能用
+   * `sort(desc)`：那会在今天是周一时把周日排到最后，而正确结果要跨周继续回溯（周一、周日、…）。
+   *
+   * @returns {number[]} 长度恒为 7，首元素 = 今天。
+   */
+  function orderFrom(today = todayWeekday()) {
+    const out = [];
+    for (let off = 0; off < 7; off++) {
+      // JS 的 % 对负数返回负数，故 +7 再取模两次，保证落在 1~7
+      out.push(((today - 1 - off) % 7 + 7) % 7 + 1);
+    }
+    return out;
+  }
+
+  const CAL_TTL = 3600e3;          // 周历缓存时效：与接口自带的 max-age=3600 对齐
+  const CAL_KEY = 'w:calendar';
+  const CAL_ENDPOINTS = [
+    { id: 'p1', base: 'https://next.bgm.tv', path: '/p1/calendar' },
+    { id: 'v0', base: 'https://api.bgm.tv', path: '/calendar' },
+  ];
+
+  /** `http://lain.bgm.tv/...` → `https://…`：v0 周历的 images 全是 http，页面是 https */
+  const toHttps = u => (typeof u === 'string' && /^http:\/\//i.test(u)) ? u.replace(/^http:/i, 'https:') : u;
+
+  /** v0 周历单条 → 内部条目（字段：name_cn / rating.score / images / collection.doing） */
+  function fromCalV0(e) {
+    const meta = (e && e.rating && typeof e.rating === 'object') ? e.rating : {};
+    const imgs = (e && e.images && typeof e.images === 'object') ? e.images : {};
+    return {
+      id: e.id,
+      name: e.name || '',
+      nameCn: e.name_cn || '',
+      cover: toHttps(pickCover(imgs)),
+      score: normScore(meta.score),
+      rank: Number(meta.rank) || 0,
+      votes: Number(meta.total) || 0,
+      doing: Number((e.collection && e.collection.doing)) || 0,
+      tagPool: [],
+      tags: [],
+      // 周历**没有**集数字段，只能从 p1 的 info 反解；v0 一路干脆留空，卡片不显示集数
+      episodes: null,
+      // air_date 是首播日期，不是「本话更新时间」；仅用于悬停提示
+      date: typeof e.air_date === 'string' ? e.air_date : '',
+      platform: '',
+      info: '',
+    };
+  }
+
+  /** p1 周历单条 → 内部条目（`{watchers, subject:{nameCN, info, metaTags, platform:{typeCN}}}`） */
+  function fromCalP1(e) {
+    const s = (e && e.subject && typeof e.subject === 'object') ? e.subject : {};
+    const meta = (s.rating && typeof s.rating === 'object') ? s.rating : {};
+    const imgs = (s.images && typeof s.images === 'object') ? s.images : {};
+    const { episodes, date } = parseInfo(s.info);
+    const platform = (s.platform && typeof s.platform === 'object')
+      ? (s.platform.typeCN || s.platform.type || '')
+      : (typeof s.platform === 'string' ? s.platform : '');
+    const pool = rawTagNames(s.metaTags);
+    return {
+      id: s.id,
+      name: s.name || '',
+      nameCn: s.nameCN || '',
+      cover: toHttps(pickCover(imgs)),
+      score: normScore(meta.score),
+      rank: Number(meta.rank) || 0,
+      votes: Number(meta.total) || 0,
+      doing: Number(e.watchers) || 0,
+      tagPool: pool,
+      tags: pickTags(pool),
+      episodes,
+      date,
+      platform,
+      info: typeof s.info === 'string' ? s.info : '',
+    };
+  }
+
+  /**
+   * 把两路响应统一成 `Map<weekdayId, items[]>`。
+   * 过滤规则与逐月通路保持一致（`cfg.hideNoScore`），但**绝不丢空分组** ——
+   * 「今天没有可显示的番剧」本身就是有效信息（newBV-Bangumi 也是保留空分组）。
+   */
+  function normalizeCalendar(payload) {
+    const byDay = new Map(WEEKDAYS.map(w => [w.id, []]));
+
+    if (Array.isArray(payload)) {                       // v0 形态
+      for (const day of payload) {
+        const id = Number(day && day.weekday && day.weekday.id) || 0;
+        const list = (day && Array.isArray(day.items)) ? day.items : [];
+        if (!byDay.has(id)) continue;
+        for (const raw of list) {
+          const it = fromCalV0(raw);
+          if (!it || it.id == null) continue;           // 同 newBV：过滤掉 id<=0 的脏数据
+          if (cfg.hideNoScore && it.score == null) continue;
+          byDay.get(id).push(it);
+        }
+      }
+    } else if (payload && typeof payload === 'object') { // p1 形态：{ "1": [...], … }
+      for (const key of Object.keys(payload)) {
+        const id = Number(key) || 0;
+        const list = Array.isArray(payload[key]) ? payload[key] : [];
+        if (!byDay.has(id)) continue;
+        for (const raw of list) {
+          const it = fromCalP1(raw);
+          if (!it || it.id == null) continue;
+          if (cfg.hideNoScore && it.score == null) continue;
+          byDay.get(id).push(it);
+        }
+      }
+    } else {
+      throw new Error('周历响应格式不认识');
+    }
+    return byDay;
+  }
+
+  /**
+   * 周历排序：**按在看人数降序**，同人数按评分降序。
+   *
+   * 刻意不用 `compareItems`（那是「评分降序」）：周历的用途是「今天追什么」，
+   * 热度比分数更贴近这个用途，而接口原序近似但**不是**严格 doing 降序
+   * （实测周一 doing 6, 1194, 1, 2234 …）⇒ 必须自己排。评分作为次序键保证稳定。
+   */
+  function compareCalendar(a, b) {
+    if (a.doing !== b.doing) return b.doing - a.doing;
+    const sa = a.score == null ? -1 : a.score;
+    const sb = b.score == null ? -1 : b.score;
+    if (sa !== sb) return sb - sa;
+    return String(a.nameCn || a.name).localeCompare(String(b.nameCn || b.name));
+  }
+
+  function readCalendarCache() {
+    const hit = store.get(CAL_KEY, null);
+    if (!hit || !Array.isArray(hit.days)) return null;
+    if (Date.now() - hit.t > CAL_TTL) return null;
+    const byDay = new Map(WEEKDAYS.map(w => [w.id, []]));
+    for (const [id, items] of hit.days) if (byDay.has(Number(id))) byDay.set(Number(id), items);
+    // cached 让渲染层能在页脚里明确标「缓存」，否则用户分不清这屏数据是新拉的还是上次的
+    return { byDay, source: hit.source || 'cache', cached: true };
+  }
+
+  function writeCalendarCache(byDay, source) {
+    store.set(CAL_KEY, { t: Date.now(), source, days: [...byDay.entries()] });
+    store.rememberKey(CAL_KEY);
+  }
+
+  /**
+   * 拉周历：缓存 → p1 → v0（顺序理由见本节标题下的注释）。
+   * @returns {Promise<{byDay:Map, source:string, error?:string}>}
+   */
+  async function loadCalendar({ force = false } = {}) {
+    if (!force) {
+      const cached = readCalendarCache();
+      if (cached) return cached;
+    }
+    let lastErr = null;
+    for (const src of CAL_ENDPOINTS) {
+      try {
+        const { status, text } = await httpText(src.base + src.path, { timeout: 20000 });
+        if (status < 200 || status >= 300) throw new Error(`HTTP ${status}`);
+        const byDay = normalizeCalendar(JSON.parse(text));
+        netStats.ok++;
+        netStats.bySource[src.id] = (netStats.bySource[src.id] || 0) + 1;
+        writeCalendarCache(byDay, src.id);
+        return { byDay, source: src.id };
+      } catch (e) {
+        netStats.err++;
+        const msg = (e && e.message) || String(e);
+        netStats.errBySource[src.id] = (netStats.errBySource[src.id] || 0) + 1;
+        netStats.lastErrors.push(`${src.id}/calendar: ${msg}`);
+        if (netStats.lastErrors.length > 8) netStats.lastErrors.shift();
+        lastErr = e;
+      }
+    }
+    return {
+      byDay: new Map(WEEKDAYS.map(w => [w.id, []])),
+      source: 'none',
+      error: (lastErr && lastErr.message) || '全部通路失败',
+    };
+  }
+
+  /* ==================================================================== *
    * 3.5 详情补拉 —— **默认关闭**（cfg.tagDetail = 'off'），仅作应急手段
    *
    * v0 通路下完全用不到：列表项本身就带全量 `tags`（≤30 个），
@@ -1003,7 +1245,7 @@
       `bili-anime-replace v${VERSION}`,
       `数据通路：${cfg.source === 'auto' ? '自动（p1 → v0）' : cfg.source}　本次使用 ${used}`,
       `请求：成功 ${netStats.ok} / 失败 ${netStats.err}　Tag 补拉 ${netStats.detail} 次`,
-      `缓存月份：${cachedN} 条`,
+      `缓存月份：${cachedN} 条 · 新番表 ${readCalendarCache() ? '缓存中' : '待拉取'}`,
       `主题：${cfg.theme === 'auto' ? `跟随 B站（当前${themeDark ? '深色' : '浅色'}）` : `强制${cfg.theme === 'dark' ? '深色' : '浅色'}`}`,
       '点这里打开设置',
     ].join('\n');
@@ -1131,7 +1373,7 @@ html.bgm-takeover.bgm-forced.bgm-light{
 html.bgm-takeover.bgm-keep-header .bgm-search{display:none}
 
 /* ---- 顶栏 ----
-   720P（1280×720，实际视口约 1265）下要同时塞下：品牌 + 9 个分类 tab + 工具区。
+   720P（1280×720，实际视口约 1265）下要同时塞下：品牌 + 10 个分类 tab + 工具区。
    硬约束：分类 tab 是**主交互**，绝不能被挤到换行或缩成省略号；
    可牺牲的是品牌文字和搜索框宽度。故：
      ① 尺寸全部走 clamp()，随视口连续收缩（而不是靠若干断点跳变）；
@@ -1139,7 +1381,9 @@ html.bgm-takeover.bgm-keep-header .bgm-search{display:none}
         滚动条是刻意藏掉的（见下），所以**必须**配套 enableDragScroll()
         —— 否则桌面鼠标用户既没滚动条、又没横向滚轮，等于"看得见滚不动"；
      ③ 品牌文字在窄屏隐藏（只留圆点），圆点是信息的最后一块 —— 见下方 @media。
-   算例（viewport 1265）：brand 18 + gap 10 + 9 chips(≈624) + gap 10 + tools(≈102) ≈ 1090 ⇒ 余量约 175px */
+   算例（viewport 1265）：brand 18 + gap 10 + 10 chips + gap 10 + tools(≈102)。
+     9 chips 时 chips≈624、余量约 175px；加第 10 个（新番表）后 chips≈693，
+     实测 tab 行 scrollWidth == clientWidth（1062/1062）⇒ **仍然放得下、不触发横向滚动** */
 .bgm-top{flex:none;background:var(--card);border-bottom:1px solid var(--line)}
 .bgm-top-in{display:flex;align-items:center;gap:clamp(8px,1.2vw,16px);max-width:1600px;margin:0 auto;
   padding:0 clamp(10px,1.5vw,20px);height:clamp(46px,6.2vh,56px)}
@@ -1205,6 +1449,23 @@ html.bgm-takeover.bgm-keep-header .bgm-search{display:none}
 .bgm-month-h{position:sticky;top:0;z-index:5;background:var(--bg);
   padding:14px 2px 8px;font-size:15px;font-weight:600;display:flex;align-items:baseline;gap:8px}
 .bgm-month-h em{font-style:normal;font-size:12px;font-weight:400;color:var(--sub)}
+
+/* ---- 新番表（周历）----
+   与月份区块共用 .bgm-grid 卡片网格，只换头。两处刻意的差异：
+   ① 头的字重更重、字号略大 —— 7 个区块要当"导航"用，扫视时得能一眼定住；
+   ② 「今天」徽标用 --accent 反色，是整页唯一的强调色块（其余靠留白区分）。 */
+.bgm-week-h{position:sticky;top:0;z-index:5;background:var(--bg);
+  padding:14px 2px 8px;font-size:12px;font-weight:600;display:flex;align-items:baseline;gap:8px}
+.bgm-week-name{font-size:16px;letter-spacing:.02em}
+.bgm-week-today{font-style:normal;font-size:11px;font-weight:700;line-height:1.4;
+  padding:1px 7px;border-radius:999px;background:var(--accent);color:var(--bg);
+  transform:translateY(-1px)}
+.bgm-week-h em{font-style:normal;font-size:12px;font-weight:400;color:var(--sub)}
+.bgm-week-empty{color:var(--sub);font-size:13px;line-height:1.6;padding:12px 2px 18px}
+.bgm-cal-foot{margin:8px 2px 40px;padding-top:16px;border-top:1px solid var(--line);
+  color:var(--sub);font-size:12px;line-height:1.6}
+/* 新番表模式下年份栏整条收起（见 syncModeButtons 里的 .bgm-cal-mode） */
+.bgm-cal-mode .bgm-years{display:none}
 .bgm-grid{display:grid;gap:16px 12px;
   grid-template-columns:repeat(auto-fill,minmax(132px,1fr))}
 @media (max-width:640px){.bgm-grid{grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:12px 8px}}
@@ -1561,11 +1822,17 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
       b.classList.toggle('on', on);
       if (on) active = b;
     });
-    // 9 个分类在窄屏会溢出成横向滚动 ⇒ 选中项必须自动滚进视野，
+    // 10 个分类在窄屏会溢出成横向滚动 ⇒ 选中项必须自动滚进视野，
     // 否则用 D-pad / 键盘切换时会「选中了但看不见」（浏览器 resize 后同样受益）。
     if (active && active.scrollIntoView) {
       try { active.scrollIntoView({ inline: 'center', block: 'nearest' }); } catch (e) { /* 老内核忽略 */ }
     }
+
+    // ★ 新番表没有年份概念 ⇒ 整条年份栏收起来（不是只灰掉：留着 21 个点了没反应的 chip
+    //   比没有更糟）。用根节点上的 class 控制，CSS 里一条 `.bgm-cal-mode .bgm-years{display:none}`
+    //   就够，几何测量的 syncHeaderVars 也跟着自动对齐。
+    const cal = !!(view.mode && view.mode.calendar);
+    if (view.root) view.root.classList.toggle('bgm-cal-mode', cal);
   }
 
   function buildYearBar() {
@@ -1719,6 +1986,125 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
   }
 
   /* ==================================================================== *
+   * 6.5 新番表渲染（周历）—— 与逐月分组并行的一套区块
+   *
+   * 为什么不复用 makeMonthSection / renderMonthItems：
+   *   - 月份区块有「空月份整体隐藏」规则（5/6/8/9 月常年 0 部），而周历**必须保留空分组**
+   *     （「今天没有可显示的番剧」是有效信息，newBV-Bangumi 也这么做）；
+   *   - 月份区块的头是纯数字 + 「N 部」，周历的头要带「今天」「N 部在播」这种语义；
+   *   - 周历没有年份概念、也没有懒加载（一次请求就拿到 7 天全部条目，112 条量级，直接渲染）。
+   * 硬套一个函数会变成 `if (isCalendar)` 分支套分支，反而更贵。
+   * ==================================================================== */
+
+  /** 单个星期区块：`<section class="bgm-week">` + 可 sticky 的头 + `.bgm-grid` 容器 */
+  function makeWeekSection(weekdayId) {
+    const w = WEEKDAYS.find(x => x.id === weekdayId) || WEEKDAYS[0];
+    const sec = el('section', 'bgm-week');
+    sec.dataset.weekday = String(w.id);
+
+    const h = el('h2', 'bgm-week-h');
+    h.appendChild(el('span', 'bgm-week-name', w.cn));
+    // 「今天」徽标：只在今天那一组出现（用 CSS 类而不是内联样式，主题切换才不脱节）
+    if (w.id === todayWeekday()) h.appendChild(el('i', 'bgm-week-today', '今天'));
+    h.appendChild(el('em', null, '加载中…'));
+    sec.appendChild(h);
+
+    const grid = el('div', 'bgm-grid');
+    sec.appendChild(grid);
+    sec.__pending = { head: h, holder: grid };
+    return sec;
+  }
+
+  /** 往星期区块里填条目；**空分组也保留**，只把副标题换成提示文案 */
+  function renderWeekItems(sec, items, meta = {}) {
+    const { head, holder } = sec.__pending || {};
+    const em = head && head.querySelector('em');
+    const isToday = Number(sec.dataset.weekday) === todayWeekday();
+
+    if (meta.error) {
+      if (em) em.textContent = '加载失败';
+      holder.textContent = '';
+      const box = el('div', 'bgm-empty bgm-err', `加载失败：${meta.error}`);
+      box.style.padding = '20px 0';
+      holder.appendChild(box);
+      return;
+    }
+
+    if (em) em.textContent = items.length ? `${items.length} 部` : '今日无番';
+    holder.textContent = '';
+    if (!items.length) {
+      // 空分组不删：留一行说明，避免用户以为数据没加载完。
+      // 「今天」那组的措辞要带「今天」——它是最可能空的一组（隐藏无评分后），
+      // 用户第一眼看到的就是它，说清楚比留白强。
+      holder.appendChild(el('div', 'bgm-week-empty', isToday ? '今天没有可显示的番剧' : '没有可显示的番剧'));
+      return;
+    }
+    // 排序放在渲染前（数据层只按 weekday 归类，不保证顺序）
+    items.slice().sort(compareCalendar).forEach(it => holder.appendChild(makeCard(it)));
+  }
+
+  /**
+   * 渲染整个新番表。
+   * @param {boolean} force 忽略缓存重新拉（设置面板「清空缓存并重载」/ 失败重试按钮调用）
+   */
+  async function renderCalendar(force = false) {
+    const token = ++view.loadToken;
+    clearObservers();
+    view.bodyIn.textContent = '';
+    view.allItems = [];
+
+    // 骨架：7 个区块，让「有几天」先有形状，比一个居中转圈更能说明这是什么页面
+    WEEKDAYS.forEach(w => {
+      const sec = makeWeekSection(w.id);
+      const sk = el('div', 'bgm-sk');
+      for (let i = 0; i < 4; i++) sk.appendChild(el('i'));
+      sec.__pending.holder.replaceWith(sk);
+      sec.__pending.holder = sk;
+      view.bodyIn.appendChild(sec);
+    });
+
+    const res = await loadCalendar({ force });
+    if (token !== view.loadToken) return;   // 期间切走了
+
+    view.bodyIn.textContent = '';
+    const order = orderFrom();              // 今天 → 往前回溯
+    let total = 0;
+
+    for (const id of order) {
+      const sec = makeWeekSection(id);
+      view.bodyIn.appendChild(sec);
+      const items = (res.byDay && res.byDay.get(id)) || [];
+      renderWeekItems(sec, items, { error: res.error });
+      if (!res.error) {
+        view.allItems.push(...items);
+        total += items.length;
+      }
+    }
+    view.lastItems = view.allItems.slice();
+
+    // 失败：顶部一条说明 + 重试（此时 7 个分组仍在，只是各自为空）
+    if (res.error) {
+      const box = el('div', 'bgm-empty bgm-err', `周历加载失败：${res.error}`);
+      box.style.padding = '0 0 24px';
+      const retry = el('button', 'bgm-btn');
+      retry.textContent = '重试';
+      retry.style.maxWidth = '140px';
+      retry.style.margin = '10px auto 0';
+      retry.addEventListener('click', () => renderCalendar(true));
+      box.appendChild(retry);
+      view.bodyIn.insertBefore(box, view.bodyIn.firstChild);
+    } else {
+      // 页脚一行：本周共几部 + 数据来自哪条通路（缓存命中时明确标「缓存」，免得用户以为没在更新）
+      const src = res.cached ? `缓存（${res.source || '未知'}）` : (res.source || '未知');
+      const foot = el('div', 'bgm-cal-foot',
+        `本周 ${total} 部在播 · 数据来自 ${src} · 缓存 ${Math.round(CAL_TTL / 60000)} 分钟`);
+      view.bodyIn.appendChild(foot);
+    }
+
+    view.body.scrollTop = 0;
+  }
+
+  /* ==================================================================== *
    * 7. 加载编排（逐月懒加载）
    * ==================================================================== */
 
@@ -1811,10 +2197,14 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
     cfg.mode = m.key;
     saveCfg();
     syncModeButtons();
-    renderYear();
+    // ★ 新番表走周历渲染（不看年份），其余分类走「年份 × 月份」懒加载
+    if (m.calendar) renderCalendar();
+    else renderYear();
   }
 
   function selectYear(y) {
+    // 新番表没有年份维度：年份栏此时是隐藏的，但键盘/程序化调用仍可能进来，直接吞掉
+    if (view.mode && view.mode.calendar) return;
     if (view.year === y) return;
     view.year = y;
     syncYearButtons();
@@ -1943,6 +2333,7 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
 
     const stat = el('div', 'bgm-stat');
     const cachedN = (store.get('cacheKeys', []) || []).length;
+    const calCached = !!readCalendarCache();
     stat.innerHTML = `通路请求：成功 ${netStats.ok} / 失败 ${netStats.err}<br>`
       + `通路使用：${Object.entries(netStats.bySource).map(([k, v]) => `${k}×${v}`).join('，') || '—'}<br>`
       + (Object.keys(netStats.errBySource).length
@@ -1952,7 +2343,7 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
       + (cfg.tagDetail === 'off' ? '详情补拉：关<br>' : `详情补拉：${netStats.detail} 次<br>`)
       + `Tag 白名单：T1 题材 ${TAG_T1.length} / T2 来源·受众 ${TAG_T2.length} / T3 平台·地区 ${cfg.showTier3 !== false ? TAG_T3.length : '关'}<br>`
       + `主题：${cfg.theme === 'auto' ? '跟随 B站' : `强制${cfg.theme === 'dark' ? '深色' : '浅色'}`} · 判定为${themeDark ? '深色' : '浅色'}<br>`
-      + `缓存月份：${cachedN} 条`;
+      + `缓存月份：${cachedN} 条 · 新番表：${calCached ? `已缓存（${CAL_TTL / 60000} 分钟内）` : '无'}`;
     panel.appendChild(stat);
 
     const foot = el('div', 'bgm-panel-foot');
@@ -1961,7 +2352,8 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
       const n = store.clearCache();
       toast(`已清空 ${n} 条缓存`);
       close();
-      renderYear();
+      if (view.mode && view.mode.calendar) renderCalendar(true);
+      else renderYear();
     });
     const bClose = el('button', 'bgm-btn', '关闭');
     bClose.addEventListener('click', close);
@@ -2060,12 +2452,17 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
 
     document.title = 'Bangumi';
 
-    view.mode = MODES.find(m => m.key === cfg.mode) || MODES[0];
+    // 分类回退要显式落到 TV，而不是 MODES[0]：MODES[0] 现在是新番表，
+    // 万一 cfg.mode 是个已下线的旧 key，用户会莫名落到周历上。
+    view.mode = MODES.find(m => m.key === cfg.mode)
+      || MODES.find(m => m.key === 'tv')
+      || MODES[0];
     view.year = new Date().getFullYear();
     syncModeButtons();
     syncThemeBtn();
     buildYearBar();
-    renderYear();
+    if (view.mode.calendar) renderCalendar();
+    else renderYear();
     wireGlobal();
   }
 
@@ -2124,7 +2521,9 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
     GM_registerMenuCommand('清空 Bangumi 缓存', () => {
       const n = store.clearCache();
       alert(`已清空 ${n} 条缓存`);
-      if (document.getElementById('bgm-anime-root')) renderYear();
+      if (!document.getElementById('bgm-anime-root')) return;
+      if (view.mode && view.mode.calendar) renderCalendar(true);
+      else renderYear();
     });
   }
 
@@ -2137,6 +2536,9 @@ html.bgm-takeover body > *:not(#bgm-anime-root):not([data-bgm-float])${keep} { d
     COVER_TIERS, pickCover, withCoverWidth, coverWidth,   // 封面档位（E2E 靠它算期望档位）
     fromP1, fromV0, monthsOf, compareItems,
     loadMonth, activeSources, ensureDetailTags, fetchDetailTags, readDetailCache,
+    // 新番表（周历）
+    WEEKDAYS, todayWeekday, orderFrom, CAL_TTL, fromCalV0, fromCalP1,
+    normalizeCalendar, compareCalendar, loadCalendar, readCalendarCache, renderCalendar,
     view, renderYear, selectMode, selectYear, startTakeover, stopTakeover,
     lastItems: () => view.lastItems,
     hideCss, applyShellMode, syncHeaderVars, headerBar,
